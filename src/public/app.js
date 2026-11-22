@@ -34,6 +34,7 @@ const botChannelInput = document.getElementById('bot-channel');
 const botMinIntervalInput = document.getElementById('bot-min-interval');
 const botMaxIntervalInput = document.getElementById('bot-max-interval');
 const botAvoidRepeatsInput = document.getElementById('bot-avoid-repeats');
+const botAutoTrendsInput = document.getElementById('bot-auto-trends');
 const botNewMessageInput = document.getElementById('bot-new-message-input');
 const dialogAddMsgBtn = document.getElementById('dialog-add-msg-btn');
 const dialogMessagesList = document.getElementById('dialog-messages-list');
@@ -124,7 +125,14 @@ function renderBotsGrid() {
       <div class="bot-card-header">
         <div class="bot-title-group">
           <h3>${escapeHtml(bot.name)}</h3>
-          <span class="bot-channel-tag">#${escapeHtml(bot.channel || 'unassigned')}</span>
+          <div class="channel-links-row">
+            <a href="https://twitch.tv/${escapeHtml(bot.channel)}" target="_blank" rel="noopener noreferrer" class="bot-channel-tag" title="Open ${bot.channel} on Twitch">
+              #${escapeHtml(bot.channel || 'unassigned')} ↗
+            </a>
+            <a href="https://twitch.tv/popout/${escapeHtml(bot.channel)}/chat?popout=" target="_blank" rel="noopener noreferrer" class="chat-popout-link" title="Open Popout Chat">
+              💬 Popout Chat
+            </a>
+          </div>
         </div>
         <div class="bot-header-controls">
           <span class="pill ${state.running ? 'pill-running' : 'pill-idle'}" id="status-pill-${bot.id}">
@@ -147,8 +155,8 @@ function renderBotsGrid() {
 
       <div class="bot-details-row">
         <span>Sent: <strong id="sent-count-${bot.id}">${state.sentCount || 0}</strong></span>
-        <span>Interval: ${bot.minIntervalSeconds}s - ${bot.maxIntervalSeconds}s</span>
-        <span>${bot.messages.length} msg${bot.messages.length === 1 ? '' : 's'}</span>
+        <span>${bot.minIntervalSeconds}s - ${bot.maxIntervalSeconds}s</span>
+        <span>${bot.autoDetectTrends ? '🔥 Crowd Mimic' : `${bot.messages.length} msgs`}</span>
       </div>
 
       <div class="bot-card-actions">
@@ -291,6 +299,7 @@ window.editBot = (botId) => {
   botMinIntervalInput.value = bot.minIntervalSeconds;
   botMaxIntervalInput.value = bot.maxIntervalSeconds;
   botAvoidRepeatsInput.checked = bot.avoidConsecutiveRepeats;
+  botAutoTrendsInput.checked = bot.autoDetectTrends ?? true;
 
   dialogMessages = [...(bot.messages || [])];
   renderDialogMessages();
@@ -307,6 +316,7 @@ addBotBtn.addEventListener('click', () => {
   botMinIntervalInput.value = 30;
   botMaxIntervalInput.value = 60;
   botAvoidRepeatsInput.checked = true;
+  botAutoTrendsInput.checked = true;
 
   dialogMessages = ['!sorteo', '!ticket', 'Participando!', 'Buena suerte!'];
   renderDialogMessages();
@@ -363,6 +373,7 @@ botForm.addEventListener('submit', async (e) => {
   const minInterval = parseInt(botMinIntervalInput.value, 10);
   const maxInterval = parseInt(botMaxIntervalInput.value, 10);
   const avoidRepeats = botAvoidRepeatsInput.checked;
+  const autoTrends = botAutoTrendsInput.checked;
 
   if (dialogMessages.length === 0) {
     alert('Please add at least one message to the pool.');
@@ -375,6 +386,7 @@ botForm.addEventListener('submit', async (e) => {
     minIntervalSeconds: minInterval,
     maxIntervalSeconds: maxInterval,
     avoidConsecutiveRepeats: avoidRepeats,
+    autoDetectTrends: autoTrends,
     messages: dialogMessages
   };
 

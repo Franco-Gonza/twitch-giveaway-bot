@@ -360,7 +360,26 @@ export class TwitchIrcClient extends EventEmitter {
       return;
     }
 
-    // 7. Successful join verification
+    // 7. Incoming chat messages (PRIVMSG #channel :message)
+    if (line.includes(' PRIVMSG ')) {
+      const match = line.match(/:(\w+)![\w@.]+\s+PRIVMSG\s+#(\w+)\s*:(.*)$/);
+      if (match) {
+        const chatter = match[1].toLowerCase();
+        const chan = match[2].toLowerCase();
+        const msgText = match[3];
+
+        if (chatter !== this.username) {
+          this.emit('chat_message', {
+            channel: chan,
+            username: chatter,
+            message: msgText
+          });
+        }
+      }
+      return;
+    }
+
+    // 8. Successful join verification
     if (line.includes(`JOIN #${lineChannel}`)) {
       channelState.joined = true;
       this.emit('joined', lineChannel);

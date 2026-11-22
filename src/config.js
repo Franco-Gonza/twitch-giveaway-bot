@@ -73,6 +73,7 @@ export function normalizeBot(bot, index = 0) {
     minIntervalSeconds: minInterval,
     maxIntervalSeconds: maxInterval,
     avoidConsecutiveRepeats: Boolean(bot.avoidConsecutiveRepeats ?? true),
+    autoDetectTrends: Boolean(bot.autoDetectTrends ?? true),
     messages: messages.length > 0 ? messages : ['!sorteo'],
     customAccount
   };

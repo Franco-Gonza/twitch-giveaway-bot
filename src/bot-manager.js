@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { TwitchIrcClient } from './twitch-irc.js';
 import { MessageScheduler } from './scheduler.js';
+import { TrendAnalyzer } from './trend-analyzer.js';
 
 export class BotManager extends EventEmitter {
   constructor(config = {}) {
@@ -8,6 +9,7 @@ export class BotManager extends EventEmitter {
     this.defaultAccount = config.defaultAccount || { username: '', oauthToken: '' };
     this.clients = new Map(); // username -> TwitchIrcClient
     this.bots = new Map(); // botId -> { botConfig, scheduler, state }
+    this.trendAnalyzer = new TrendAnalyzer();
 
     // Initialize configured bots
     if (Array.isArray(config.bots)) {
@@ -69,6 +71,10 @@ export class BotManager extends EventEmitter {
         this.emit('client_status', { username: user, status });
       });
 
+      client.on('chat_message', ({ channel, username, message }) => {
+        this.trendAnalyzer.recordMessage(channel, message, username);
+      });
+
       this.clients.set(user, client);
     } else {
       // Update token if changed
@@ -128,7 +134,7 @@ export class BotManager extends EventEmitter {
     });
   }
 
-  _dispatchBotMessage(botId, message) {
+  _dispatchBotMessage(botId, defaultMessage) {
     const runner = this.bots.get(botId);
     if (!runner) return;
 
@@ -147,7 +153,20 @@ export class BotManager extends EventEmitter {
       client.connect();
     }
 
-    const sent = client.sendMessage(runner.botConfig.channel, message);
+    // Hybrid Trend Detection: Check if there is an active crowd trend
+    let messageToSend = defaultMessage;
+    if (runner.botConfig.autoDetectTrends) {
+      const trend = this.trendAnalyzer.getTopTrend(runner.botConfig.channel);
+      if (trend) {
+        messageToSend = trend.text;
+        this.emit('log', {
+          type: 'info',
+          text: `[#${runner.botConfig.channel}] 🔥 Crowd Mimic: Detected trend "${trend.text}" (${trend.percentage}% of chat)`
+        });
+      }
+    }
+
+    const sent = client.sendMessage(runner.botConfig.channel, messageToSend);
     if (sent === 'sub_only_blocked') {
       // Logged in client
     } else if (!sent) {
