@@ -53,6 +53,21 @@ describe('TwitchIrcClient Unit Tests', () => {
     assert.equal(client.status, 'disconnected');
   });
 
+  test('ignores USERNOTICE events and captures genuine NOTICE', () => {
+    const client = new TwitchIrcClient();
+    const notices = [];
+    client.on('notice', (msg) => notices.push(msg));
+
+    // USERNOTICE from subscriber message
+    client._parseLine('@badge-info=... :tmi.twitch.tv USERNOTICE #rubius :vamoo');
+    assert.equal(notices.length, 0);
+
+    // Genuine channel notice (e.g. slow mode)
+    client._parseLine(':tmi.twitch.tv NOTICE #rubius :This room is in slow mode.');
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0], 'This room is in slow mode.');
+  });
+
   test('sendMessage formats PRIVMSG command properly', () => {
     const client = new TwitchIrcClient({
       username: 'mybot',

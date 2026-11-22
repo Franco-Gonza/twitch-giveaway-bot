@@ -211,9 +211,9 @@ export class TwitchIrcClient extends EventEmitter {
       return;
     }
 
-    // 4. NOTICE messages (e.g. slowmode, bans, sub-only)
-    if (line.includes('NOTICE')) {
-      const match = line.match(/NOTICE\s+#?\w*\s*:(.*)$/);
+    // 4. Genuine system NOTICE messages (e.g. slowmode, bans, sub-only), ignoring USERNOTICE (subs/raids)
+    if (!line.includes('USERNOTICE') && /(?:^|\s)NOTICE\s+/.test(line)) {
+      const match = line.match(/(?:^|\s)NOTICE\s+#?\w*\s*:(.*)$/);
       if (match) {
         this.emit('log', { type: 'warning', text: `Twitch Notice: ${match[1]}` });
         this.emit('notice', match[1]);
