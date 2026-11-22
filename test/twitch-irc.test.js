@@ -68,6 +68,40 @@ describe('TwitchIrcClient Unit Tests', () => {
     assert.equal(notices[0], 'This room is in slow mode.');
   });
 
+  test('detects subscriber status from USERSTATE badges', () => {
+    const client = new TwitchIrcClient();
+
+    // User is not subscribed
+    client._parseLine('@badge-info=;badges=premium/1;color=... :tmi.twitch.tv USERSTATE #rubius');
+    assert.equal(client.isSubscribed, false);
+
+    // User has subscriber badge
+    client._parseLine('@badge-info=;badges=subscriber/12,premium/1;color=... :tmi.twitch.tv USERSTATE #rubius');
+    assert.equal(client.isSubscribed, true);
+  });
+
+  test('blocks message dispatch during sub-only mode if not subscribed', () => {
+    const client = new TwitchIrcClient({
+      username: 'franco',
+      channel: 'rubius'
+    });
+    client.status = 'joined';
+    client.isSubscribed = false;
+
+    // Room state activates subs-only
+    client._parseLine('@slow=0;subs-only=1 :tmi.twitch.tv ROOMSTATE #rubius');
+    assert.equal(client.subOnly, true);
+    assert.equal(client.isSubOnlyBlocked(), true);
+
+    const result = client.sendMessage('test message');
+    assert.equal(result, 'sub_only_blocked');
+
+    // Room state disables subs-only
+    client._parseLine('@slow=0;subs-only=0 :tmi.twitch.tv ROOMSTATE #rubius');
+    assert.equal(client.subOnly, false);
+    assert.equal(client.isSubOnlyBlocked(), false);
+  });
+
   test('sendMessage formats PRIVMSG command properly', () => {
     const client = new TwitchIrcClient({
       username: 'mybot',

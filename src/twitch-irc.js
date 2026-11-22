@@ -19,6 +19,14 @@ export class TwitchIrcClient extends EventEmitter {
     this.maxReconnectAttempts = 5;
     this.reconnectTimer = null;
     this.manualDisconnect = false;
+
+    // Subscriber-only state tracking
+    this.subOnly = false;
+    this.isSubscribed = false;
+  }
+
+  isSubOnlyBlocked() {
+    return Boolean(this.subOnly && !this.isSubscribed);
   }
 
   updateCredentials({ username, oauthToken, channel }) {
@@ -130,6 +138,14 @@ export class TwitchIrcClient extends EventEmitter {
       return false;
     }
 
+    if (this.isSubOnlyBlocked()) {
+      this.emit('log', {
+        type: 'warning',
+        text: `[#${this.channel}] Postponed: Subscriber-only mode is active and @${this.username} is not a subscriber. Waiting for mode to end...`
+      });
+      return 'sub_only_blocked';
+    }
+
     const command = `PRIVMSG #${this.channel} :${cleanMsg}`;
     this._send(command);
     this.emit('message_sent', {
@@ -213,6 +229,14 @@ export class TwitchIrcClient extends EventEmitter {
 
     // 4. Genuine system NOTICE messages (e.g. slowmode, bans, sub-only), ignoring USERNOTICE (subs/raids)
     if (!line.includes('USERNOTICE') && /(?:^|\s)NOTICE\s+/.test(line)) {
+      if (line.includes('msg_subsonly') || line.includes('not a subscriber')) {
+        this.subOnly = true;
+        this.isSubscribed = false;
+        this.emit('log', {
+          type: 'warning',
+          text: `[#${this.channel}] Twitch confirmed subscriber-only mode restriction. Auto-commenting paused until mode ends.`
+        });
+      }
       const match = line.match(/(?:^|\s)NOTICE\s+#?\w*\s*:(.*)$/);
       if (match) {
         this.emit('log', { type: 'warning', text: `Twitch Notice: ${match[1]}` });
@@ -221,7 +245,42 @@ export class TwitchIrcClient extends EventEmitter {
       return;
     }
 
-    // 5. Successful join verification
+    // 5. ROOMSTATE (channel settings like subs-only, slow mode)
+    if (line.includes(' ROOMSTATE ')) {
+      const subMatch = line.match(/[;@]subs-only=([01])/);
+      if (subMatch) {
+        const newSubOnly = subMatch[1] === '1';
+        if (this.subOnly !== newSubOnly) {
+          this.subOnly = newSubOnly;
+          if (this.subOnly) {
+            this.emit('log', {
+              type: 'warning',
+              text: `[#${this.channel}] Subscriber-only mode activated.` +
+                    (this.isSubscribed ? ' (You are subscribed, will keep commenting)' : ' (Not subscribed: auto-commenting paused)')
+            });
+          } else {
+            this.emit('log', {
+              type: 'info',
+              text: `[#${this.channel}] Subscriber-only mode ended. Normal commenting will resume.`
+            });
+          }
+        }
+      }
+      return;
+    }
+
+    // 6. USERSTATE / GLOBALUSERSTATE (user badges in channel, e.g. subscriber, moderator)
+    if (line.includes(' USERSTATE ') || line.includes(' GLOBALUSERSTATE ')) {
+      const badgeMatch = line.match(/[;@]badges=([^;]*)/);
+      if (badgeMatch) {
+        const badges = badgeMatch[1] || '';
+        const isSub = /(?:subscriber|founder|moderator|broadcaster)\//.test(badges);
+        this.isSubscribed = isSub;
+      }
+      return;
+    }
+
+    // 7. Successful join verification
     if (line.includes(`JOIN #${this.channel}`)) {
       this._setStatus('joined');
       this.emit('joined', this.channel);
