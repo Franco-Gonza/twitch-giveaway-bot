@@ -46,6 +46,7 @@ function logEntry(type, text) {
 botManager.on('log', ({ type, text }) => logEntry(type, text));
 botManager.on('bot_state', (state) => broadcast('bot_state', state));
 botManager.on('bot_countdown', (countdown) => broadcast('bot_countdown', countdown));
+botManager.on('bot_trend', (trend) => broadcast('bot_trend', trend));
 botManager.on('client_status', (status) => broadcast('client_status', status));
 
 // MIME types for static assets
@@ -125,6 +126,7 @@ const server = createServer(async (req, res) => {
     const initData = {
       config: sanitizeConfigForClient(config),
       botStates: botManager.getAllStates(),
+      trendStats: botManager.getAllTrendStats(),
       logs: logHistory
     };
     res.write(`event: init\ndata: ${JSON.stringify(initData)}\n\n`);
@@ -247,6 +249,16 @@ const server = createServer(async (req, res) => {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }
+    return;
+  }
+
+  // GET /api/bots/:id/trend
+  const trendMatch = pathname.match(/^\/api\/bots\/([^/]+)\/trend$/);
+  if (trendMatch && req.method === 'GET') {
+    const botId = trendMatch[1];
+    const stats = botManager.getBotTrendStats(botId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(stats || { totalInWindow: 0, windowSeconds: 25, topTrend: null, topPhrases: [] }));
     return;
   }
 

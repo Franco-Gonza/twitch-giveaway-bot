@@ -37,4 +37,23 @@ describe('TrendAnalyzer Unit Tests', () => {
     const trend = analyzer.getTopTrend('rubius', { minOccurrences: 4, minRatio: 0.2 });
     assert.equal(trend, null);
   });
+
+  test('computes channel stats with top phrases and volume', () => {
+    const analyzer = new TrendAnalyzer({ windowMs: 10000 });
+
+    analyzer.recordMessage('rubius', 'GG', 'u1');
+    analyzer.recordMessage('rubius', 'GG', 'u2');
+    analyzer.recordMessage('rubius', 'DinoDance', 'u3');
+    analyzer.recordMessage('rubius', 'GG', 'u4');
+    analyzer.recordMessage('rubius', 'hola', 'u5');
+
+    const stats = analyzer.getChannelStats('rubius');
+    assert.equal(stats.totalInWindow, 5);
+    assert.ok(stats.topTrend);
+    assert.equal(stats.topTrend.text, 'GG');
+    assert.equal(stats.topTrend.count, 3);
+    assert.equal(stats.topTrend.percentage, 60);
+    assert.ok(stats.topPhrases.length >= 2);
+    assert.equal(stats.topPhrases[0].text, 'GG');
+  });
 });

@@ -87,6 +87,58 @@ export class TrendAnalyzer {
     return null;
   }
 
+  getChannelStats(channel, options = {}) {
+    const cleanChan = (channel || '').replace(/^#/, '').toLowerCase();
+    this.prune(cleanChan);
+    const list = this.history.get(cleanChan);
+    const windowSecs = Math.round(this.windowMs / 1000);
+
+    if (!list || list.length === 0) {
+      return {
+        totalInWindow: 0,
+        windowSeconds: windowSecs,
+        topTrend: null,
+        topPhrases: []
+      };
+    }
+
+    const minOccurrences = options.minOccurrences || 4;
+    const minRatio = options.minRatio || 0.15;
+
+    const counts = new Map();
+    for (const item of list) {
+      const norm = item.text.toLowerCase();
+      const existing = counts.get(norm);
+      if (existing) {
+        existing.count++;
+      } else {
+        counts.set(norm, { text: item.text, count: 1 });
+      }
+    }
+
+    const sorted = Array.from(counts.values()).sort((a, b) => b.count - a.count);
+    const top = sorted[0] || null;
+    const total = list.length;
+    const ratio = top ? top.count / total : 0;
+    const meetsThreshold = top ? (top.count >= minOccurrences && ratio >= minRatio) : false;
+
+    return {
+      totalInWindow: total,
+      windowSeconds: windowSecs,
+      topTrend: top ? {
+        text: top.text,
+        count: top.count,
+        percentage: Math.round(ratio * 100),
+        meetsThreshold
+      } : null,
+      topPhrases: sorted.slice(0, 4).map(p => ({
+        text: p.text,
+        count: p.count,
+        percentage: Math.round((p.count / total) * 100)
+      }))
+    };
+  }
+
   clear(channel) {
     if (channel) {
       this.history.delete(channel.replace(/^#/, '').toLowerCase());

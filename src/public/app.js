@@ -51,6 +51,11 @@ function initEventSource() {
     botStates = data.botStates || {};
     updateHeaderAccount();
     renderBotsGrid();
+    if (data.trendStats) {
+      for (const [botId, stats] of Object.entries(data.trendStats)) {
+        updateBotCardTrend(botId, stats);
+      }
+    }
     if (data.logs) {
       logsContainer.innerHTML = '';
       data.logs.forEach(appendLog);
@@ -78,6 +83,11 @@ function initEventSource() {
     botStates[botId].remainingSeconds = remainingSeconds;
     botStates[botId].totalSeconds = totalSeconds;
     updateBotCardCountdown(botId, remainingSeconds, totalSeconds);
+  });
+
+  eventSource.addEventListener('bot_trend', (e) => {
+    const { botId, stats } = JSON.parse(e.data);
+    updateBotCardTrend(botId, stats);
   });
 
   eventSource.addEventListener('log', (e) => {
@@ -159,6 +169,19 @@ function renderBotsGrid() {
         <span>${bot.autoDetectTrends ? '🔥 Crowd Mimic' : `${bot.messages.length} msgs`}</span>
       </div>
 
+      ${bot.autoDetectTrends ? `
+        <div class="crowd-radar-box" id="crowd-radar-${bot.id}">
+          <div class="crowd-radar-header">
+            <span class="crowd-radar-title">🔥 Crowd Mimic Radar</span>
+            <span class="crowd-radar-volume" id="crowd-volume-${bot.id}">0 msgs/25s</span>
+          </div>
+          <div class="crowd-radar-body" id="crowd-body-${bot.id}">
+            <span class="crowd-radar-status">Listening to chat...</span>
+          </div>
+          <div class="crowd-radar-chips" id="crowd-chips-${bot.id}"></div>
+        </div>
+      ` : ''}
+
       <div class="bot-card-actions">
         <button class="btn btn-primary" id="start-btn-${bot.id}" onclick="window.startBot('${bot.id}')" ${state.running ? 'disabled' : ''}>
           ▶ Start
@@ -215,6 +238,46 @@ function updateBotCardCountdown(botId, remaining, total) {
   } else {
     if (timerNum) timerNum.textContent = '--';
     if (progressBar) progressBar.style.width = '0%';
+  }
+}
+
+function updateBotCardTrend(botId, stats) {
+  if (!stats) return;
+  const volEl = document.getElementById(`crowd-volume-${botId}`);
+  const bodyEl = document.getElementById(`crowd-body-${botId}`);
+  const chipsEl = document.getElementById(`crowd-chips-${botId}`);
+
+  if (volEl) {
+    volEl.textContent = `${stats.totalInWindow || 0} msgs/${stats.windowSeconds || 25}s`;
+  }
+
+  if (bodyEl) {
+    if (stats.topTrend) {
+      const isReady = stats.topTrend.meetsThreshold;
+      const tagClass = isReady ? 'radar-tag ready' : 'radar-tag leading';
+      const label = isReady ? '⚡ Trigger Ready' : 'Top';
+      bodyEl.innerHTML = `
+        <span class="${tagClass}" title="${escapeHtml(stats.topTrend.text)}">
+          ${label}: "${escapeHtml(stats.topTrend.text)}" (${stats.topTrend.percentage}% · ${stats.topTrend.count}x)
+        </span>
+      `;
+    } else if (stats.totalInWindow > 0) {
+      bodyEl.innerHTML = `<span class="crowd-radar-status">Chat varied (no dominant trend yet)</span>`;
+    } else {
+      bodyEl.innerHTML = `<span class="crowd-radar-status">Listening to chat...</span>`;
+    }
+  }
+
+  if (chipsEl) {
+    if (stats.topPhrases && stats.topPhrases.length > 0) {
+      chipsEl.innerHTML = stats.topPhrases.map(p => `
+        <span class="crowd-chip" title="${escapeHtml(p.text)}">
+          ${escapeHtml(p.text)} <small>${p.percentage}%</small>
+        </span>
+      `).join('');
+    } else {
+      chipsEl.innerHTML = '';
+    }
   }
 }
 

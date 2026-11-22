@@ -314,6 +314,105 @@ body {
   gap: 0.5rem;
 }
 
+/* Crowd Mimic Radar in Card */
+.crowd-radar-box {
+  background-color: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.65rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.crowd-radar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+}
+
+.crowd-radar-title {
+  font-weight: 700;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.crowd-radar-volume {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.crowd-radar-body {
+  font-size: 0.8rem;
+  min-height: 1.4rem;
+  display: flex;
+  align-items: center;
+}
+
+.crowd-radar-status {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.radar-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.75rem;
+  word-break: break-word;
+}
+
+.radar-tag.ready {
+  background-color: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success);
+  animation: pulse-border 1.5s infinite;
+}
+
+.radar-tag.leading {
+  background-color: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+@keyframes pulse-border {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(74, 222, 128, 0); }
+}
+
+.crowd-radar-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.crowd-chip {
+  font-size: 0.7rem;
+  background-color: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.35rem;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crowd-chip small {
+  color: var(--accent);
+  font-weight: 700;
+  margin-left: 0.2rem;
+}
+
 /* Buttons */
 .btn {
   display: inline-flex;

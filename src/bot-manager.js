@@ -17,6 +17,29 @@ export class BotManager extends EventEmitter {
         this._initBot(bot);
       }
     }
+
+    this._startTrendTicker();
+  }
+
+  _startTrendTicker() {
+    if (this._trendTicker) return;
+    this._trendTicker = setInterval(() => {
+      for (const [botId, runner] of this.bots.entries()) {
+        const state = runner.scheduler.getState();
+        if (state.running && runner.botConfig.autoDetectTrends && runner.botConfig.channel) {
+          const stats = this.trendAnalyzer.getChannelStats(runner.botConfig.channel);
+          this.emit('bot_trend', {
+            botId,
+            channel: runner.botConfig.channel,
+            stats
+          });
+        }
+      }
+    }, 2000);
+
+    if (this._trendTicker.unref) {
+      this._trendTicker.unref();
+    }
   }
 
   updateConfig(config) {
@@ -247,5 +270,21 @@ export class BotManager extends EventEmitter {
       states[id] = runner.scheduler.getState();
     }
     return states;
+  }
+
+  getBotTrendStats(botId) {
+    const runner = this.bots.get(botId);
+    if (!runner || !runner.botConfig.channel) return null;
+    return this.trendAnalyzer.getChannelStats(runner.botConfig.channel);
+  }
+
+  getAllTrendStats() {
+    const stats = {};
+    for (const [id, runner] of this.bots.entries()) {
+      if (runner.botConfig.autoDetectTrends && runner.botConfig.channel) {
+        stats[id] = this.trendAnalyzer.getChannelStats(runner.botConfig.channel);
+      }
+    }
+    return stats;
   }
 }
