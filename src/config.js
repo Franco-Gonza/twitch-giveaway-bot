@@ -43,10 +43,21 @@ export function normalizeAccount(acc = {}) {
   return { username, oauthToken: token };
 }
 
+export function extractChannelName(input = '') {
+  let clean = (input || '').trim().toLowerCase();
+  // Strip URL if user pasted full URL (e.g. https://www.twitch.tv/rubius or twitch.tv/rubius)
+  clean = clean.replace(/^(?:https?:\/\/)?(?:www\.)?twitch\.tv\//, '');
+  // Strip leading # or /
+  clean = clean.replace(/^[#/]+/, '');
+  // Extract only the channel slug before any query, params or trailing slash
+  clean = clean.split(/[/?#]/)[0];
+  return clean;
+}
+
 export function normalizeBot(bot, index = 0) {
   const id = bot.id || `bot_${Date.now()}_${index}`;
   const name = (bot.name || `Bot #${index + 1}`).trim();
-  const channel = (bot.channel || '').trim().replace(/^#/, '').toLowerCase();
+  const channel = extractChannelName(bot.channel);
 
   let minInterval = Number.parseInt(bot.minIntervalSeconds, 10);
   if (Number.isNaN(minInterval) || minInterval < 5) minInterval = 5;
