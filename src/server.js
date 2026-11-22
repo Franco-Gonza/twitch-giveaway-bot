@@ -2,9 +2,8 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, saveConfig, sanitizeConfigForClient } from './config.js';
-import { TwitchIrcClient } from './twitch-irc.js';
-import { MessageScheduler } from './scheduler.js';
+import { loadConfig, saveConfig, sanitizeConfigForClient, normalizeBot } from './config.js';
+import { BotManager } from './bot-manager.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
@@ -12,18 +11,7 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // Initialize state
 let config = await loadConfig();
-const ircClient = new TwitchIrcClient({
-  username: config.username,
-  oauthToken: config.oauthToken,
-  channel: config.channel
-});
-
-const scheduler = new MessageScheduler({
-  messages: config.messages,
-  minIntervalSeconds: config.minIntervalSeconds,
-  maxIntervalSeconds: config.maxIntervalSeconds,
-  avoidConsecutiveRepeats: config.avoidConsecutiveRepeats
-});
+const botManager = new BotManager(config);
 
 // SSE subscriber connections
 const sseClients = new Set();
@@ -39,9 +27,9 @@ function broadcast(eventType, data) {
   }
 }
 
-// Log history buffer for new client connects
+// Log history buffer
 const logHistory = [];
-const MAX_LOG_HISTORY = 50;
+const MAX_LOG_HISTORY = 60;
 
 function logEntry(type, text) {
   const entry = {
@@ -54,28 +42,11 @@ function logEntry(type, text) {
   broadcast('log', entry);
 }
 
-// Wire IRC client events
-ircClient.on('log', ({ type, text }) => logEntry(type, text));
-ircClient.on('status_change', (status) => {
-  broadcast('irc_status', { status });
-});
-
-// Wire Scheduler events
-scheduler.on('dispatch', ({ message, sentCount }) => {
-  const sent = ircClient.sendMessage(message);
-  if (!sent) {
-    logEntry('warning', `Skipped message dispatch (IRC not connected to #${config.channel})`);
-  }
-  broadcast('bot_state', scheduler.getState());
-});
-
-scheduler.on('countdown', (countdown) => {
-  broadcast('countdown', countdown);
-});
-
-scheduler.on('status_change', () => {
-  broadcast('bot_state', scheduler.getState());
-});
+// Wire BotManager events
+botManager.on('log', ({ type, text }) => logEntry(type, text));
+botManager.on('bot_state', (state) => broadcast('bot_state', state));
+botManager.on('bot_countdown', (countdown) => broadcast('bot_countdown', countdown));
+botManager.on('client_status', (status) => broadcast('client_status', status));
 
 // MIME types for static assets
 const MIME_TYPES = {
@@ -114,7 +85,7 @@ async function parseJsonBody(req) {
       body += chunk;
       if (body.length > 1e6) {
         req.destroy();
-        reject(new Error('Request payload too large'));
+        reject(new Error('Payload too large'));
       }
     });
     req.on('end', () => {
@@ -131,9 +102,8 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const { pathname } = url;
 
-  // CORS headers for local dev convenience
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
@@ -142,7 +112,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // SSE Stream Endpoint
+  // SSE Stream
   if (pathname === '/api/stream' && req.method === 'GET') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -152,11 +122,9 @@ const server = createServer(async (req, res) => {
 
     sseClients.add(res);
 
-    // Initial state bundle
     const initData = {
       config: sanitizeConfigForClient(config),
-      ircStatus: ircClient.status,
-      botState: scheduler.getState(),
+      botStates: botManager.getAllStates(),
       logs: logHistory
     };
     res.write(`event: init\ndata: ${JSON.stringify(initData)}\n\n`);
@@ -172,39 +140,39 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // REST API: GET /api/config
+  // GET /api/config
   if (pathname === '/api/config' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(sanitizeConfigForClient(config)));
     return;
   }
 
-  // REST API: POST /api/config
+  // POST /api/config (Updates default account or multiple bots)
   if (pathname === '/api/config' && req.method === 'POST') {
     try {
       const body = await parseJsonBody(req);
-      
-      // If oauthToken is masked or not provided in update, retain existing
-      if (!body.oauthToken || body.oauthToken.includes('••••')) {
-        body.oauthToken = config.oauthToken;
+
+      // Preserve masked tokens if unchanged
+      if (body.defaultAccount) {
+        if (!body.defaultAccount.oauthToken || body.defaultAccount.oauthToken.includes('••••')) {
+          body.defaultAccount.oauthToken = config.defaultAccount?.oauthToken || '';
+        }
+      }
+
+      if (Array.isArray(body.bots)) {
+        body.bots = body.bots.map(incomingBot => {
+          const existing = config.bots.find(b => b.id === incomingBot.id);
+          if (incomingBot.customAccount && existing?.customAccount) {
+            if (!incomingBot.customAccount.oauthToken || incomingBot.customAccount.oauthToken.includes('••••')) {
+              incomingBot.customAccount.oauthToken = existing.customAccount.oauthToken;
+            }
+          }
+          return incomingBot;
+        });
       }
 
       config = await saveConfig(body);
-      
-      // Update IRC client credentials & channel
-      ircClient.updateCredentials({
-        username: config.username,
-        oauthToken: config.oauthToken,
-        channel: config.channel
-      });
-
-      // Update Scheduler parameters
-      scheduler.updateConfig({
-        messages: config.messages,
-        minIntervalSeconds: config.minIntervalSeconds,
-        maxIntervalSeconds: config.maxIntervalSeconds,
-        avoidConsecutiveRepeats: config.avoidConsecutiveRepeats
-      });
+      botManager.updateConfig(config);
 
       logEntry('info', 'Configuration updated successfully');
       broadcast('config', sanitizeConfigForClient(config));
@@ -218,64 +186,99 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // REST API: POST /api/bot/start
-  if (pathname === '/api/bot/start' && req.method === 'POST') {
-    if (!config.username || !config.oauthToken || !config.channel) {
+  // POST /api/bots (Create new bot)
+  if (pathname === '/api/bots' && req.method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const newBot = normalizeBot(body, config.bots.length);
+      config.bots.push(newBot);
+
+      config = await saveConfig(config);
+      botManager.updateConfig(config);
+
+      logEntry('info', `Created new bot "${newBot.name}" for #${newBot.channel || 'unassigned'}`);
+      broadcast('config', sanitizeConfigForClient(config));
+
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, bot: newBot, config: sanitizeConfigForClient(config) }));
+    } catch (err) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ 
-        error: 'Please configure your Twitch username, OAuth token, and target channel first.' 
-      }));
-      return;
+      res.end(JSON.stringify({ error: err.message }));
     }
-
-    if (ircClient.status !== 'joined' && ircClient.status !== 'authenticated') {
-      ircClient.connect();
-    }
-
-    scheduler.start();
-    logEntry('info', `Giveaway auto-commenter started for channel #${config.channel}`);
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, botState: scheduler.getState() }));
     return;
   }
 
-  // REST API: POST /api/bot/stop
-  if (pathname === '/api/bot/stop' && req.method === 'POST') {
-    scheduler.stop();
-    ircClient.disconnect();
-    logEntry('info', 'Giveaway auto-commenter stopped.');
+  // DELETE /api/bots/:id
+  const deleteMatch = pathname.match(/^\/api\/bots\/([^/]+)$/);
+  if (deleteMatch && req.method === 'DELETE') {
+    const botId = deleteMatch[1];
+    config.bots = config.bots.filter(b => b.id !== botId);
+
+    config = await saveConfig(config);
+    botManager.updateConfig(config);
+
+    logEntry('info', `Deleted bot instance "${botId}"`);
+    broadcast('config', sanitizeConfigForClient(config));
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, botState: scheduler.getState() }));
+    res.end(JSON.stringify({ ok: true, config: sanitizeConfigForClient(config) }));
     return;
   }
 
-  // REST API: POST /api/bot/test
-  if (pathname === '/api/bot/test' && req.method === 'POST') {
-    if (!config.channel) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Target channel is not configured.' }));
-      return;
-    }
-
-    // Ensure connection before test dispatch
-    if (ircClient.status !== 'joined' && ircClient.status !== 'authenticated') {
-      ircClient.connect();
-      // Allow brief moment for auth if just triggered
-      setTimeout(() => {
-        const msg = scheduler.pickRandomMessage() || '!sorteo';
-        const ok = ircClient.sendMessage(msg);
+  // Bot Actions: /api/bots/:id/start, /api/bots/:id/stop, /api/bots/:id/test
+  const actionMatch = pathname.match(/^\/api\/bots\/([^/]+)\/(start|stop|test)$/);
+  if (actionMatch && req.method === 'POST') {
+    const [, botId, action] = actionMatch;
+    try {
+      if (action === 'start') {
+        const state = botManager.startBot(botId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok, message: msg }));
-      }, 1500);
+        res.end(JSON.stringify({ ok: true, state }));
+      } else if (action === 'stop') {
+        const state = botManager.stopBot(botId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, state }));
+      } else if (action === 'test') {
+        const result = botManager.testBot(botId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      }
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // Backward compatibility legacy endpoints for single-bot (defaults to first bot)
+  if (pathname === '/api/bot/start' && req.method === 'POST') {
+    const firstBot = config.bots[0];
+    if (!firstBot) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'No bots configured.' }));
       return;
     }
+    try {
+      const state = botManager.startBot(firstBot.id);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, botState: state }));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
 
-    const msg = scheduler.pickRandomMessage() || '!sorteo';
-    const ok = ircClient.sendMessage(msg);
+  if (pathname === '/api/bot/stop' && req.method === 'POST') {
+    const firstBot = config.bots[0];
+    if (!firstBot) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    const state = botManager.stopBot(firstBot.id);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok, message: msg }));
+    res.end(JSON.stringify({ ok: true, botState: state }));
     return;
   }
 
@@ -291,9 +294,9 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n======================================================`);
-  console.log(`  Twitch Giveaway Bot UI: http://localhost:${PORT}`);
+  console.log(`  Twitch Giveaway Multi-Bot Hub: http://localhost:${PORT}`);
   console.log(`======================================================\n`);
-  logEntry('info', `Server initialized on port ${PORT}`);
+  logEntry('info', `Multi-Bot Hub running on port ${PORT}`);
 });
 
-export { server, ircClient, scheduler };
+export { server, botManager };

@@ -1,35 +1,44 @@
-// Twitch Giveaway Bot Client Controller
+// Twitch Multi-Bot Hub Client Controller
 
-let appConfig = null;
-let currentMessages = [];
+let appConfig = { defaultAccount: {}, bots: [] };
+let botStates = {};
+let dialogMessages = [];
 let eventSource = null;
 
 // DOM Elements
-const ircStatusBadge = document.getElementById('irc-status-badge');
-const botStatusPill = document.getElementById('bot-status-pill');
-const displayChannel = document.getElementById('display-channel');
-const displayUser = document.getElementById('display-user');
-const displayInterval = document.getElementById('display-interval');
-const countdownSeconds = document.getElementById('countdown-seconds');
-const progressBarFill = document.getElementById('progress-bar-fill');
-const sentCountEl = document.getElementById('sent-count');
-const messageCountBadge = document.getElementById('message-count-badge');
-const messagesList = document.getElementById('messages-list');
+const headerAccountName = document.getElementById('header-account-name');
+const openAccountBtn = document.getElementById('open-account-btn');
+const addBotBtn = document.getElementById('add-bot-btn');
+const botCountIndicator = document.getElementById('bot-count-indicator');
+const botsGrid = document.getElementById('bots-grid');
 const logsContainer = document.getElementById('logs-container');
-
-const startBtn = document.getElementById('start-btn');
-const stopBtn = document.getElementById('stop-btn');
-const testBtn = document.getElementById('test-btn');
 const clearLogsBtn = document.getElementById('clear-logs-btn');
-const openSettingsBtn = document.getElementById('open-settings-btn');
-const closeDialogBtn = document.getElementById('close-dialog-btn');
-const cancelDialogBtn = document.getElementById('cancel-dialog-btn');
-const settingsDialog = document.getElementById('settings-dialog');
-const settingsForm = document.getElementById('settings-form');
-const addMessageForm = document.getElementById('add-message-form');
-const newMessageInput = document.getElementById('new-message-input');
 
-// Initialize SSE connection
+// Account Dialog Elements
+const accountDialog = document.getElementById('account-dialog');
+const closeAccountDialogBtn = document.getElementById('close-account-dialog-btn');
+const cancelAccountDialogBtn = document.getElementById('cancel-account-dialog-btn');
+const accountForm = document.getElementById('account-form');
+const accUsernameInput = document.getElementById('acc-username');
+const accOauthInput = document.getElementById('acc-oauth');
+
+// Bot Dialog Elements
+const botDialog = document.getElementById('bot-dialog');
+const botDialogTitle = document.getElementById('bot-dialog-title');
+const closeBotDialogBtn = document.getElementById('close-bot-dialog-btn');
+const cancelBotDialogBtn = document.getElementById('cancel-bot-dialog-btn');
+const botForm = document.getElementById('bot-form');
+const editBotIdInput = document.getElementById('edit-bot-id');
+const botNameInput = document.getElementById('bot-name');
+const botChannelInput = document.getElementById('bot-channel');
+const botMinIntervalInput = document.getElementById('bot-min-interval');
+const botMaxIntervalInput = document.getElementById('bot-max-interval');
+const botAvoidRepeatsInput = document.getElementById('bot-avoid-repeats');
+const botNewMessageInput = document.getElementById('bot-new-message-input');
+const dialogAddMsgBtn = document.getElementById('dialog-add-msg-btn');
+const dialogMessagesList = document.getElementById('dialog-messages-list');
+
+// Initialize SSE Stream
 function initEventSource() {
   if (eventSource) eventSource.close();
 
@@ -37,9 +46,10 @@ function initEventSource() {
 
   eventSource.addEventListener('init', (e) => {
     const data = JSON.parse(e.data);
-    applyConfig(data.config);
-    updateIrcStatus(data.ircStatus);
-    updateBotState(data.botState);
+    appConfig = data.config || { defaultAccount: {}, bots: [] };
+    botStates = data.botStates || {};
+    updateHeaderAccount();
+    renderBotsGrid();
     if (data.logs) {
       logsContainer.innerHTML = '';
       data.logs.forEach(appendLog);
@@ -47,107 +57,156 @@ function initEventSource() {
   });
 
   eventSource.addEventListener('config', (e) => {
-    applyConfig(JSON.parse(e.data));
-  });
-
-  eventSource.addEventListener('irc_status', (e) => {
-    const { status } = JSON.parse(e.data);
-    updateIrcStatus(status);
+    appConfig = JSON.parse(e.data);
+    updateHeaderAccount();
+    renderBotsGrid();
   });
 
   eventSource.addEventListener('bot_state', (e) => {
-    updateBotState(JSON.parse(e.data));
+    const data = JSON.parse(e.data);
+    botStates[data.botId] = {
+      ...(botStates[data.botId] || {}),
+      ...data
+    };
+    updateBotCardState(data.botId);
   });
 
-  eventSource.addEventListener('countdown', (e) => {
-    const { remainingSeconds, totalSeconds } = JSON.parse(e.data);
-    updateCountdown(remainingSeconds, totalSeconds);
+  eventSource.addEventListener('bot_countdown', (e) => {
+    const { botId, remainingSeconds, totalSeconds } = JSON.parse(e.data);
+    if (!botStates[botId]) botStates[botId] = {};
+    botStates[botId].remainingSeconds = remainingSeconds;
+    botStates[botId].totalSeconds = totalSeconds;
+    updateBotCardCountdown(botId, remainingSeconds, totalSeconds);
   });
 
   eventSource.addEventListener('log', (e) => {
     appendLog(JSON.parse(e.data));
   });
-
-  eventSource.onerror = () => {
-    updateIrcStatus('disconnected');
-  };
 }
 
-function applyConfig(cfg) {
-  appConfig = cfg;
-  currentMessages = [...(cfg.messages || [])];
-
-  displayChannel.textContent = cfg.channel ? `#${cfg.channel}` : '#not-configured';
-  displayUser.textContent = cfg.username ? `as @${cfg.username}` : '(not configured)';
-  displayInterval.textContent = `${cfg.minIntervalSeconds}s - ${cfg.maxIntervalSeconds}s`;
-
-  // Populate settings form inputs
-  document.getElementById('cfg-username').value = cfg.username || '';
-  document.getElementById('cfg-oauth').value = cfg.oauthTokenMasked || '';
-  document.getElementById('cfg-channel').value = cfg.channel || '';
-  document.getElementById('cfg-min-interval').value = cfg.minIntervalSeconds || 30;
-  document.getElementById('cfg-max-interval').value = cfg.maxIntervalSeconds || 60;
-  document.getElementById('cfg-avoid-repeats').checked = cfg.avoidConsecutiveRepeats ?? true;
-
-  renderMessagesList();
-}
-
-function updateIrcStatus(status) {
-  ircStatusBadge.className = 'badge';
-  const textEl = ircStatusBadge.querySelector('.status-text');
-
-  switch (status) {
-    case 'joined':
-      ircStatusBadge.classList.add('badge-connected');
-      textEl.textContent = `Chat Connected (#${appConfig?.channel || ''})`;
-      break;
-    case 'authenticated':
-      ircStatusBadge.classList.add('badge-connected');
-      textEl.textContent = 'Authenticated';
-      break;
-    case 'connecting':
-      ircStatusBadge.classList.add('badge-connecting');
-      textEl.textContent = 'Connecting...';
-      break;
-    default:
-      ircStatusBadge.classList.add('badge-disconnected');
-      textEl.textContent = 'Disconnected';
-      break;
+function updateHeaderAccount() {
+  const acc = appConfig.defaultAccount || {};
+  if (acc.username) {
+    headerAccountName.textContent = `@${acc.username}`;
+  } else {
+    headerAccountName.textContent = '@not-configured';
   }
 }
 
-function updateBotState(state) {
+function renderBotsGrid() {
+  botsGrid.innerHTML = '';
+  const bots = appConfig.bots || [];
+  botCountIndicator.textContent = bots.length;
+
+  if (bots.length === 0) {
+    const emptyNotice = document.createElement('div');
+    emptyNotice.className = 'card';
+    emptyNotice.style.gridColumn = '1 / -1';
+    emptyNotice.style.textAlign = 'center';
+    emptyNotice.style.padding = '3rem 1.5rem';
+    emptyNotice.innerHTML = `
+      <h3 style="margin-bottom:0.5rem;">No channel bots created yet</h3>
+      <p style="color:var(--text-secondary); margin-bottom:1.5rem;">Create a bot instance for any Twitch channel giveaway.</p>
+      <button class="btn btn-primary" onclick="document.getElementById('add-bot-btn').click()">+ Add First Channel Bot</button>
+    `;
+    botsGrid.appendChild(emptyNotice);
+    return;
+  }
+
+  bots.forEach(bot => {
+    const card = document.createElement('div');
+    card.className = 'bot-card';
+    card.id = `card-${bot.id}`;
+
+    const state = botStates[bot.id] || { running: false, sentCount: 0 };
+
+    card.innerHTML = `
+      <div class="bot-card-header">
+        <div class="bot-title-group">
+          <h3>${escapeHtml(bot.name)}</h3>
+          <span class="bot-channel-tag">#${escapeHtml(bot.channel || 'unassigned')}</span>
+        </div>
+        <div class="bot-header-controls">
+          <span class="pill ${state.running ? 'pill-running' : 'pill-idle'}" id="status-pill-${bot.id}">
+            ${state.running ? 'Running' : 'Stopped'}
+          </span>
+          <button class="btn btn-subtle icon-btn" title="Edit Bot" onclick="window.editBot('${bot.id}')">✏️</button>
+          <button class="btn btn-subtle icon-btn" title="Delete Bot" onclick="window.deleteBot('${bot.id}')">🗑️</button>
+        </div>
+      </div>
+
+      <div class="bot-timer-box">
+        <div class="timer-countdown-row">
+          <span class="timer-num" id="timer-num-${bot.id}">--</span>
+          <span class="timer-sec">seconds</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progress-bar-${bot.id}" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <div class="bot-details-row">
+        <span>Sent: <strong id="sent-count-${bot.id}">${state.sentCount || 0}</strong></span>
+        <span>Interval: ${bot.minIntervalSeconds}s - ${bot.maxIntervalSeconds}s</span>
+        <span>${bot.messages.length} msg${bot.messages.length === 1 ? '' : 's'}</span>
+      </div>
+
+      <div class="bot-card-actions">
+        <button class="btn btn-primary" id="start-btn-${bot.id}" onclick="window.startBot('${bot.id}')" ${state.running ? 'disabled' : ''}>
+          ▶ Start
+        </button>
+        <button class="btn btn-danger" id="stop-btn-${bot.id}" onclick="window.stopBot('${bot.id}')" ${!state.running ? 'disabled' : ''}>
+          ⏹ Stop
+        </button>
+        <button class="btn btn-secondary" id="test-btn-${bot.id}" onclick="window.testBot('${bot.id}')">
+          🚀 Send Now
+        </button>
+      </div>
+    `;
+
+    botsGrid.appendChild(card);
+  });
+}
+
+function updateBotCardState(botId) {
+  const state = botStates[botId];
   if (!state) return;
 
-  if (state.running) {
-    botStatusPill.className = 'pill pill-running';
-    botStatusPill.textContent = 'Running';
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
-  } else {
-    botStatusPill.className = 'pill pill-idle';
-    botStatusPill.textContent = 'Stopped';
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-    countdownSeconds.textContent = '--';
-    progressBarFill.style.width = '0%';
-  }
+  const pill = document.getElementById(`status-pill-${botId}`);
+  const startBtn = document.getElementById(`start-btn-${botId}`);
+  const stopBtn = document.getElementById(`stop-btn-${botId}`);
+  const sentCount = document.getElementById(`sent-count-${botId}`);
 
-  if (typeof state.sentCount === 'number') {
-    sentCountEl.textContent = state.sentCount;
+  if (pill) {
+    pill.className = `pill ${state.running ? 'pill-running' : 'pill-idle'}`;
+    pill.textContent = state.running ? 'Running' : 'Stopped';
+  }
+  if (startBtn) startBtn.disabled = Boolean(state.running);
+  if (stopBtn) stopBtn.disabled = !Boolean(state.running);
+  if (sentCount && typeof state.sentCount === 'number') {
+    sentCount.textContent = state.sentCount;
+  }
+  if (!state.running) {
+    const timerNum = document.getElementById(`timer-num-${botId}`);
+    const progressBar = document.getElementById(`progress-bar-${botId}`);
+    if (timerNum) timerNum.textContent = '--';
+    if (progressBar) progressBar.style.width = '0%';
   }
 }
 
-function updateCountdown(remaining, total) {
+function updateBotCardCountdown(botId, remaining, total) {
+  const timerNum = document.getElementById(`timer-num-${botId}`);
+  const progressBar = document.getElementById(`progress-bar-${botId}`);
+
   if (remaining > 0) {
-    countdownSeconds.textContent = remaining;
-    if (total > 0) {
-      const percent = Math.max(0, Math.min(100, ((total - remaining) / total) * 100));
-      progressBarFill.style.width = `${percent}%`;
+    if (timerNum) timerNum.textContent = remaining;
+    if (progressBar && total > 0) {
+      const pct = Math.max(0, Math.min(100, ((total - remaining) / total) * 100));
+      progressBar.style.width = `${pct}%`;
     }
   } else {
-    countdownSeconds.textContent = '--';
-    progressBarFill.style.width = '0%';
+    if (timerNum) timerNum.textContent = '--';
+    if (progressBar) progressBar.style.width = '0%';
   }
 }
 
@@ -167,168 +226,253 @@ function appendLog(entry) {
   line.appendChild(msg);
   logsContainer.appendChild(line);
 
-  // Auto-scroll to bottom
   logsContainer.scrollTop = logsContainer.scrollHeight;
 }
 
-function renderMessagesList() {
-  messagesList.innerHTML = '';
-  messageCountBadge.textContent = `${currentMessages.length} message${currentMessages.length === 1 ? '' : 's'}`;
+// Global Bot Action Handlers
+window.startBot = async (botId) => {
+  try {
+    const res = await fetch(`/api/bots/${botId}/start`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) alert(data.error || 'Failed to start bot');
+  } catch {
+    alert('Error connecting to server');
+  }
+};
 
-  currentMessages.forEach((msg, idx) => {
+window.stopBot = async (botId) => {
+  try {
+    const res = await fetch(`/api/bots/${botId}/stop`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) alert(data.error || 'Failed to stop bot');
+  } catch {
+    alert('Error connecting to server');
+  }
+};
+
+window.testBot = async (botId) => {
+  const btn = document.getElementById(`test-btn-${botId}`);
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/bots/${botId}/test`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) alert(data.error || 'Failed to send test message');
+  } catch {
+    alert('Error connecting to server');
+  } finally {
+    setTimeout(() => { if (btn) btn.disabled = false; }, 2000);
+  }
+};
+
+window.deleteBot = async (botId) => {
+  const bot = appConfig.bots.find(b => b.id === botId);
+  const name = bot ? bot.name : botId;
+  if (!confirm(`Are you sure you want to delete bot "${name}"?`)) return;
+
+  try {
+    const res = await fetch(`/api/bots/${botId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json();
+      alert(data.error || 'Failed to delete bot');
+    }
+  } catch {
+    alert('Error connecting to server');
+  }
+};
+
+window.editBot = (botId) => {
+  const bot = appConfig.bots.find(b => b.id === botId);
+  if (!bot) return;
+
+  botDialogTitle.textContent = `Edit Bot: ${bot.name}`;
+  editBotIdInput.value = bot.id;
+  botNameInput.value = bot.name;
+  botChannelInput.value = bot.channel;
+  botMinIntervalInput.value = bot.minIntervalSeconds;
+  botMaxIntervalInput.value = bot.maxIntervalSeconds;
+  botAvoidRepeatsInput.checked = bot.avoidConsecutiveRepeats;
+
+  dialogMessages = [...(bot.messages || [])];
+  renderDialogMessages();
+
+  botDialog.showModal();
+};
+
+// Add New Bot trigger
+addBotBtn.addEventListener('click', () => {
+  botDialogTitle.textContent = 'Add New Channel Bot';
+  editBotIdInput.value = '';
+  botNameInput.value = `Bot #${(appConfig.bots.length || 0) + 1}`;
+  botChannelInput.value = '';
+  botMinIntervalInput.value = 30;
+  botMaxIntervalInput.value = 60;
+  botAvoidRepeatsInput.checked = true;
+
+  dialogMessages = ['!sorteo', '!ticket', 'Participando!', 'Buena suerte!'];
+  renderDialogMessages();
+
+  botDialog.showModal();
+});
+
+// Message chips in Dialog
+function renderDialogMessages() {
+  dialogMessagesList.innerHTML = '';
+  dialogMessages.forEach((msg, idx) => {
     const tag = document.createElement('div');
     tag.className = 'message-tag';
-
-    const text = document.createElement('span');
-    text.textContent = msg;
-
-    const delBtn = document.createElement('button');
-    delBtn.className = 'delete-tag-btn';
-    delBtn.title = 'Remove message';
-    delBtn.innerHTML = '×';
-    delBtn.onclick = () => removeMessage(idx);
-
-    tag.appendChild(text);
-    tag.appendChild(delBtn);
-    messagesList.appendChild(tag);
+    tag.innerHTML = `
+      <span>${escapeHtml(msg)}</span>
+      <button type="button" class="delete-tag-btn" onclick="window.removeDialogMsg(${idx})">×</button>
+    `;
+    dialogMessagesList.appendChild(tag);
   });
 }
 
-async function addMessage(msg) {
-  const clean = msg.trim();
-  if (!clean || currentMessages.includes(clean)) return;
-
-  currentMessages.push(clean);
-  renderMessagesList();
-  await syncMessagesToServer();
-}
-
-async function removeMessage(index) {
-  if (currentMessages.length <= 1) {
-    alert('You need at least one message in the giveaway pool!');
+window.removeDialogMsg = (idx) => {
+  if (dialogMessages.length <= 1) {
+    alert('At least one message is required in the pool!');
     return;
   }
-  currentMessages.splice(index, 1);
-  renderMessagesList();
-  await syncMessagesToServer();
-}
+  dialogMessages.splice(idx, 1);
+  renderDialogMessages();
+};
 
-async function syncMessagesToServer() {
+dialogAddMsgBtn.addEventListener('click', () => {
+  const val = botNewMessageInput.value.trim();
+  if (val && !dialogMessages.includes(val)) {
+    dialogMessages.push(val);
+    renderDialogMessages();
+    botNewMessageInput.value = '';
+    botNewMessageInput.focus();
+  }
+});
+
+botNewMessageInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    dialogAddMsgBtn.click();
+  }
+});
+
+// Save Bot Form
+botForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const botId = editBotIdInput.value;
+  const name = botNameInput.value.trim();
+  const channel = botChannelInput.value.trim();
+  const minInterval = parseInt(botMinIntervalInput.value, 10);
+  const maxInterval = parseInt(botMaxIntervalInput.value, 10);
+  const avoidRepeats = botAvoidRepeatsInput.checked;
+
+  if (dialogMessages.length === 0) {
+    alert('Please add at least one message to the pool.');
+    return;
+  }
+
+  const payload = {
+    name,
+    channel,
+    minIntervalSeconds: minInterval,
+    maxIntervalSeconds: maxInterval,
+    avoidConsecutiveRepeats: avoidRepeats,
+    messages: dialogMessages
+  };
+
   try {
-    await fetch('/api/config', {
+    let res;
+    if (botId) {
+      // Update existing bot in config.bots array
+      const updatedBots = appConfig.bots.map(b => {
+        if (b.id === botId) {
+          return { ...b, ...payload };
+        }
+        return b;
+      });
+      res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bots: updatedBots })
+      });
+    } else {
+      // Create new bot
+      res = await fetch('/api/bots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    if (res.ok) {
+      botDialog.close();
+    } else {
+      const data = await res.json();
+      alert(data.error || 'Failed to save bot');
+    }
+  } catch {
+    alert('Error communicating with server');
+  }
+});
+
+// Account Settings Modal
+openAccountBtn.addEventListener('click', () => {
+  const acc = appConfig.defaultAccount || {};
+  accUsernameInput.value = acc.username || '';
+  accOauthInput.value = acc.oauthTokenMasked || '';
+  accountDialog.showModal();
+});
+
+accountForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = accUsernameInput.value.trim();
+  const oauthToken = accOauthInput.value.trim();
+
+  try {
+    const res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: currentMessages })
+      body: JSON.stringify({
+        defaultAccount: {
+          username,
+          oauthToken
+        }
+      })
     });
-  } catch (err) {
-    console.error('Failed to sync messages:', err);
-  }
-}
-
-// Bot Control Handlers
-startBtn.addEventListener('click', async () => {
-  if (!appConfig?.hasToken || !appConfig?.channel || !appConfig?.username) {
-    settingsDialog.showModal();
-    return;
-  }
-  try {
-    const res = await fetch('/api/bot/start', { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) alert(data.error || 'Failed to start bot');
-  } catch (err) {
+    if (res.ok) {
+      accountDialog.close();
+    } else {
+      const data = await res.json();
+      alert(data.error || 'Failed to save account');
+    }
+  } catch {
     alert('Error connecting to server');
   }
 });
 
-stopBtn.addEventListener('click', async () => {
-  try {
-    await fetch('/api/bot/stop', { method: 'POST' });
-  } catch (err) {
-    alert('Error connecting to server');
-  }
-});
+// Dialog Dismissers
+closeAccountDialogBtn.addEventListener('click', () => accountDialog.close());
+cancelAccountDialogBtn.addEventListener('click', () => accountDialog.close());
+closeBotDialogBtn.addEventListener('click', () => botDialog.close());
+cancelBotDialogBtn.addEventListener('click', () => botDialog.close());
 
-testBtn.addEventListener('click', async () => {
-  if (!appConfig?.hasToken || !appConfig?.channel) {
-    settingsDialog.showModal();
-    return;
-  }
-  testBtn.disabled = true;
-  try {
-    const res = await fetch('/api/bot/test', { method: 'POST' });
-    const data = await res.json();
-    if (!res.ok) alert(data.error || 'Test message failed');
-  } catch (err) {
-    alert('Error connecting to server');
-  } finally {
-    setTimeout(() => { testBtn.disabled = false; }, 2000);
-  }
+accountDialog.addEventListener('click', (e) => {
+  if (e.target === accountDialog) accountDialog.close();
+});
+botDialog.addEventListener('click', (e) => {
+  if (e.target === botDialog) botDialog.close();
 });
 
 clearLogsBtn.addEventListener('click', () => {
   logsContainer.innerHTML = '';
 });
 
-// Message Form
-addMessageForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const val = newMessageInput.value;
-  if (val) {
-    addMessage(val);
-    newMessageInput.value = '';
-    newMessageInput.focus();
-  }
-});
-
-// Dialog (Modern Web Guidance modal handling)
-openSettingsBtn.addEventListener('click', () => {
-  settingsDialog.showModal();
-});
-
-closeDialogBtn.addEventListener('click', () => {
-  settingsDialog.close();
-});
-
-cancelDialogBtn.addEventListener('click', () => {
-  settingsDialog.close();
-});
-
-// Light dismiss: click outside dialog backdrop closes modal
-settingsDialog.addEventListener('click', (e) => {
-  if (e.target === settingsDialog) {
-    settingsDialog.close();
-  }
-});
-
-settingsForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const formData = new FormData(settingsForm);
-
-  const payload = {
-    username: formData.get('username'),
-    oauthToken: formData.get('oauthToken'),
-    channel: formData.get('channel'),
-    minIntervalSeconds: parseInt(formData.get('minIntervalSeconds'), 10),
-    maxIntervalSeconds: parseInt(formData.get('maxIntervalSeconds'), 10),
-    avoidConsecutiveRepeats: formData.get('avoidConsecutiveRepeats') === 'on'
-  };
-
-  try {
-    const res = await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (res.ok) {
-      settingsDialog.close();
-    } else {
-      alert(data.error || 'Failed to save configuration');
-    }
-  } catch (err) {
-    alert('Error saving configuration');
-  }
-});
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 // Boot
 initEventSource();

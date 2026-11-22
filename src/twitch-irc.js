@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 /**
  * Twitch IRC client implemented using Node 24 native WebSocket.
  * Connects to wss://irc-ws.chat.twitch.tv:443.
+ * Supports multiple channel joins per connection.
  * Zero external dependencies.
  */
 export class TwitchIrcClient extends EventEmitter {
@@ -11,32 +12,75 @@ export class TwitchIrcClient extends EventEmitter {
     this.serverUrl = options.serverUrl || 'wss://irc-ws.chat.twitch.tv:443';
     this.username = (options.username || '').toLowerCase();
     this.oauthToken = options.oauthToken || '';
-    this.channel = (options.channel || '').replace(/^#/, '').toLowerCase();
     
+    // Multi-channel tracking
+    this.channels = new Set();
+    if (options.channel) {
+      this.channels.add(options.channel.replace(/^#/, '').toLowerCase());
+    }
+    this.channelStates = new Map(); // channel -> { subOnly: boolean, isSubscribed: boolean, joined: boolean }
+
     this.ws = null;
-    this.status = 'disconnected'; // 'disconnected' | 'connecting' | 'connected' | 'authenticated' | 'joined'
+    this.status = 'disconnected'; // 'disconnected' | 'connecting' | 'connected' | 'authenticated'
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
     this.reconnectTimer = null;
     this.manualDisconnect = false;
-
-    // Subscriber-only state tracking
-    this.subOnly = false;
-    this.isSubscribed = false;
   }
 
-  isSubOnlyBlocked() {
-    return Boolean(this.subOnly && !this.isSubscribed);
+  // Backward compatibility property for single-channel access
+  get channel() {
+    return Array.from(this.channels)[0] || '';
   }
 
-  updateCredentials({ username, oauthToken, channel }) {
+  set channel(ch) {
+    if (ch) this.joinChannel(ch);
+  }
+
+  get subOnly() {
+    const state = this.channelStates.get(this.channel);
+    return state ? state.subOnly : false;
+  }
+
+  set subOnly(val) {
+    const state = this._getOrCreateChannelState(this.channel);
+    state.subOnly = Boolean(val);
+  }
+
+  get isSubscribed() {
+    const state = this.channelStates.get(this.channel);
+    return state ? state.isSubscribed : false;
+  }
+
+  set isSubscribed(val) {
+    const state = this._getOrCreateChannelState(this.channel);
+    state.isSubscribed = Boolean(val);
+  }
+
+  _getOrCreateChannelState(channel) {
+    const clean = (channel || '').replace(/^#/, '').toLowerCase();
+    if (!this.channelStates.has(clean)) {
+      this.channelStates.set(clean, {
+        subOnly: false,
+        isSubscribed: false,
+        joined: false
+      });
+    }
+    return this.channelStates.get(clean);
+  }
+
+  isSubOnlyBlocked(channel = this.channel) {
+    const state = this._getOrCreateChannelState(channel);
+    return Boolean(state.subOnly && !state.isSubscribed);
+  }
+
+  updateCredentials({ username, oauthToken }) {
     if (username) this.username = username.toLowerCase();
     if (oauthToken) this.oauthToken = oauthToken;
-    if (channel) this.channel = channel.replace(/^#/, '').toLowerCase();
   }
 
   connect() {
-    if (this.status === 'connecting' || this.status === 'connected' || this.status === 'joined') {
+    if (this.status === 'connecting' || this.status === 'connected' || this.status === 'authenticated') {
       return;
     }
 
@@ -48,7 +92,7 @@ export class TwitchIrcClient extends EventEmitter {
 
     this.manualDisconnect = false;
     this._setStatus('connecting');
-    this.emit('log', { type: 'info', text: `Connecting to Twitch IRC (${this.serverUrl})...` });
+    this.emit('log', { type: 'info', text: `Connecting to Twitch IRC (${this.username})...` });
 
     try {
       this.ws = new WebSocket(this.serverUrl);
@@ -80,6 +124,11 @@ export class TwitchIrcClient extends EventEmitter {
       this._setStatus('disconnected');
       this.ws = null;
 
+      // Mark all channels as not joined
+      for (const state of this.channelStates.values()) {
+        state.joined = false;
+      }
+
       if (wasConnected) {
         this.emit('log', { 
           type: 'warning', 
@@ -93,7 +142,7 @@ export class TwitchIrcClient extends EventEmitter {
     });
 
     this.ws.addEventListener('error', (event) => {
-      this.emit('log', { type: 'error', text: `WebSocket error occurred: ${event.message || 'Unknown error'}` });
+      this.emit('log', { type: 'error', text: `WebSocket error: ${event.message || 'Unknown error'}` });
       this.emit('error', event);
     });
   }
@@ -106,8 +155,8 @@ export class TwitchIrcClient extends EventEmitter {
     }
 
     if (this.ws) {
-      if (this.status === 'joined' && this.channel) {
-        this._send(`PART #${this.channel}`);
+      for (const ch of this.channels) {
+        this._send(`PART #${ch}`);
       }
       try {
         this.ws.close();
@@ -117,63 +166,88 @@ export class TwitchIrcClient extends EventEmitter {
       this.ws = null;
     }
     this._setStatus('disconnected');
-    this.emit('log', { type: 'info', text: 'Disconnected from Twitch IRC.' });
-  }
-
-  sendMessage(message) {
-    if (!message || typeof message !== 'string') return false;
-    const cleanMsg = message.trim();
-    if (!cleanMsg) return false;
-
-    if (this.status !== 'joined' && this.status !== 'authenticated') {
-      this.emit('log', { 
-        type: 'error', 
-        text: `Cannot send message: not joined to channel #${this.channel} (Status: ${this.status})` 
-      });
-      return false;
-    }
-
-    if (!this.channel) {
-      this.emit('log', { type: 'error', text: 'Cannot send message: no target channel configured' });
-      return false;
-    }
-
-    if (this.isSubOnlyBlocked()) {
-      this.emit('log', {
-        type: 'warning',
-        text: `[#${this.channel}] Postponed: Subscriber-only mode is active and @${this.username} is not a subscriber. Waiting for mode to end...`
-      });
-      return 'sub_only_blocked';
-    }
-
-    const command = `PRIVMSG #${this.channel} :${cleanMsg}`;
-    this._send(command);
-    this.emit('message_sent', {
-      channel: this.channel,
-      message: cleanMsg,
-      timestamp: new Date().toISOString()
-    });
-    this.emit('log', {
-      type: 'success',
-      text: `[#${this.channel}] Sent: "${cleanMsg}"`
-    });
-    return true;
+    this.emit('log', { type: 'info', text: `Disconnected from Twitch IRC (@${this.username}).` });
   }
 
   joinChannel(channel) {
     const clean = (channel || '').replace(/^#/, '').toLowerCase();
     if (!clean) return;
 
-    if (this.channel && this.channel !== clean && this.status === 'joined') {
-      this._send(`PART #${this.channel}`);
+    this.channels.add(clean);
+    const state = this._getOrCreateChannelState(clean);
+
+    if (this.status === 'authenticated' && !state.joined) {
+      this._send(`JOIN #${clean}`);
+      this.emit('log', { type: 'info', text: `Joining channel #${clean}...` });
+    }
+  }
+
+  leaveChannel(channel) {
+    const clean = (channel || '').replace(/^#/, '').toLowerCase();
+    if (!clean) return;
+
+    this.channels.delete(clean);
+    const state = this.channelStates.get(clean);
+    if (state) state.joined = false;
+
+    if (this.status === 'authenticated') {
+      this._send(`PART #${clean}`);
+      this.emit('log', { type: 'info', text: `Left channel #${clean}` });
+    }
+  }
+
+  sendMessage(channelOrMsg, maybeMsg) {
+    let targetChannel = '';
+    let cleanMsg = '';
+
+    if (maybeMsg !== undefined) {
+      targetChannel = (channelOrMsg || '').replace(/^#/, '').toLowerCase();
+      cleanMsg = (maybeMsg || '').trim();
+    } else {
+      targetChannel = this.channel;
+      cleanMsg = (channelOrMsg || '').trim();
     }
 
-    this.channel = clean;
-    if (this.status === 'authenticated' || this.status === 'joined') {
-      this._send(`JOIN #${this.channel}`);
-      this._setStatus('joined');
-      this.emit('log', { type: 'info', text: `Joining channel #${this.channel}...` });
+    if (!cleanMsg) return false;
+
+    if (!targetChannel) {
+      this.emit('log', { type: 'error', text: 'Cannot send message: no target channel specified' });
+      return false;
     }
+
+    if (this.status !== 'authenticated') {
+      this.emit('log', { 
+        type: 'error', 
+        text: `Cannot send message: IRC not authenticated for @${this.username} (Status: ${this.status})` 
+      });
+      return false;
+    }
+
+    // Ensure we are joined
+    if (!this.channels.has(targetChannel)) {
+      this.joinChannel(targetChannel);
+    }
+
+    if (this.isSubOnlyBlocked(targetChannel)) {
+      this.emit('log', {
+        type: 'warning',
+        text: `[#${targetChannel}] Postponed: Subscriber-only mode is active and @${this.username} is not subscribed. Waiting for mode to end...`
+      });
+      return 'sub_only_blocked';
+    }
+
+    const command = `PRIVMSG #${targetChannel} :${cleanMsg}`;
+    this._send(command);
+    this.emit('message_sent', {
+      channel: targetChannel,
+      message: cleanMsg,
+      timestamp: new Date().toISOString()
+    });
+    this.emit('log', {
+      type: 'success',
+      text: `[#${targetChannel}] Sent: "${cleanMsg}"`
+    });
+    return true;
   }
 
   _setStatus(newStatus) {
@@ -208,10 +282,11 @@ export class TwitchIrcClient extends EventEmitter {
     if (line.includes(' 001 ') && line.includes('GLHF')) {
       this._setStatus('authenticated');
       this.emit('log', { type: 'success', text: `Authenticated successfully as @${this.username}` });
-      if (this.channel) {
-        this._send(`JOIN #${this.channel}`);
-        this._setStatus('joined');
-        this.emit('log', { type: 'info', text: `Joined channel #${this.channel}` });
+      
+      // Join all registered channels
+      for (const ch of this.channels) {
+        this._send(`JOIN #${ch}`);
+        this.emit('log', { type: 'info', text: `Joined channel #${ch}` });
       }
       return;
     }
@@ -220,27 +295,32 @@ export class TwitchIrcClient extends EventEmitter {
     if (line.includes('NOTICE') && (line.includes('Login authentication failed') || line.includes('Login unsuccessful'))) {
       this.emit('log', { 
         type: 'error', 
-        text: 'Twitch authentication failed! Please check your username and OAuth token.' 
+        text: `Twitch authentication failed for @${this.username}! Check token.` 
       });
       this.emit('auth_failed');
       this.disconnect();
       return;
     }
 
+    // Extract target channel if present in IRC line
+    const chanMatch = line.match(/(?:JOIN|PART|ROOMSTATE|USERSTATE|NOTICE)\s+#(\w+)/);
+    const lineChannel = chanMatch ? chanMatch[1].toLowerCase() : this.channel;
+    const channelState = this._getOrCreateChannelState(lineChannel);
+
     // 4. Genuine system NOTICE messages (e.g. slowmode, bans, sub-only), ignoring USERNOTICE (subs/raids)
     if (!line.includes('USERNOTICE') && /(?:^|\s)NOTICE\s+/.test(line)) {
       if (line.includes('msg_subsonly') || line.includes('not a subscriber')) {
-        this.subOnly = true;
-        this.isSubscribed = false;
+        channelState.subOnly = true;
+        channelState.isSubscribed = false;
         this.emit('log', {
           type: 'warning',
-          text: `[#${this.channel}] Twitch confirmed subscriber-only mode restriction. Auto-commenting paused until mode ends.`
+          text: `[#${lineChannel}] Twitch confirmed subscriber-only mode restriction. Auto-commenting paused.`
         });
       }
       const match = line.match(/(?:^|\s)NOTICE\s+#?\w*\s*:(.*)$/);
       if (match) {
-        this.emit('log', { type: 'warning', text: `Twitch Notice: ${match[1]}` });
-        this.emit('notice', match[1]);
+        this.emit('log', { type: 'warning', text: `Twitch Notice [#${lineChannel}]: ${match[1]}` });
+        this.emit('notice', { channel: lineChannel, message: match[1] });
       }
       return;
     }
@@ -250,18 +330,18 @@ export class TwitchIrcClient extends EventEmitter {
       const subMatch = line.match(/[;@]subs-only=([01])/);
       if (subMatch) {
         const newSubOnly = subMatch[1] === '1';
-        if (this.subOnly !== newSubOnly) {
-          this.subOnly = newSubOnly;
-          if (this.subOnly) {
+        if (channelState.subOnly !== newSubOnly) {
+          channelState.subOnly = newSubOnly;
+          if (channelState.subOnly) {
             this.emit('log', {
               type: 'warning',
-              text: `[#${this.channel}] Subscriber-only mode activated.` +
-                    (this.isSubscribed ? ' (You are subscribed, will keep commenting)' : ' (Not subscribed: auto-commenting paused)')
+              text: `[#${lineChannel}] Subscriber-only mode activated.` +
+                    (channelState.isSubscribed ? ' (You are subscribed, will keep commenting)' : ' (Not subscribed: auto-commenting paused)')
             });
           } else {
             this.emit('log', {
               type: 'info',
-              text: `[#${this.channel}] Subscriber-only mode ended. Normal commenting will resume.`
+              text: `[#${lineChannel}] Subscriber-only mode ended. Normal commenting will resume.`
             });
           }
         }
@@ -269,21 +349,21 @@ export class TwitchIrcClient extends EventEmitter {
       return;
     }
 
-    // 6. USERSTATE / GLOBALUSERSTATE (user badges in channel, e.g. subscriber, moderator)
-    if (line.includes(' USERSTATE ') || line.includes(' GLOBALUSERSTATE ')) {
+    // 6. USERSTATE (user badges in channel, e.g. subscriber, moderator)
+    if (line.includes(' USERSTATE ')) {
       const badgeMatch = line.match(/[;@]badges=([^;]*)/);
       if (badgeMatch) {
         const badges = badgeMatch[1] || '';
         const isSub = /(?:subscriber|founder|moderator|broadcaster)\//.test(badges);
-        this.isSubscribed = isSub;
+        channelState.isSubscribed = isSub;
       }
       return;
     }
 
     // 7. Successful join verification
-    if (line.includes(`JOIN #${this.channel}`)) {
-      this._setStatus('joined');
-      this.emit('joined', this.channel);
+    if (line.includes(`JOIN #${lineChannel}`)) {
+      channelState.joined = true;
+      this.emit('joined', lineChannel);
       return;
     }
   }
@@ -293,7 +373,7 @@ export class TwitchIrcClient extends EventEmitter {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       this.emit('log', { 
         type: 'error', 
-        text: `Failed to reconnect after ${this.maxReconnectAttempts} attempts. Stopped.` 
+        text: `Failed to reconnect @${this.username} after ${this.maxReconnectAttempts} attempts.` 
       });
       return;
     }
@@ -302,7 +382,7 @@ export class TwitchIrcClient extends EventEmitter {
     const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 16000);
     this.emit('log', { 
       type: 'warning', 
-      text: `Reconnecting in ${delay / 1000}s (Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...` 
+      text: `Reconnecting @${this.username} in ${delay / 1000}s (Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...` 
     });
 
     this.reconnectTimer = setTimeout(() => {

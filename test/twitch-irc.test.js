@@ -36,7 +36,7 @@ describe('TwitchIrcClient Unit Tests', () => {
 
     client._parseLine(':tmi.twitch.tv 001 botuser :Welcome, GLHF!');
 
-    assert.equal(client.status, 'joined');
+    assert.equal(client.status, 'authenticated');
     assert.ok(sent.includes('JOIN #streamer'));
   });
 
@@ -54,7 +54,7 @@ describe('TwitchIrcClient Unit Tests', () => {
   });
 
   test('ignores USERNOTICE events and captures genuine NOTICE', () => {
-    const client = new TwitchIrcClient();
+    const client = new TwitchIrcClient({ channel: 'rubius' });
     const notices = [];
     client.on('notice', (msg) => notices.push(msg));
 
@@ -65,11 +65,11 @@ describe('TwitchIrcClient Unit Tests', () => {
     // Genuine channel notice (e.g. slow mode)
     client._parseLine(':tmi.twitch.tv NOTICE #rubius :This room is in slow mode.');
     assert.equal(notices.length, 1);
-    assert.equal(notices[0], 'This room is in slow mode.');
+    assert.equal(notices[0].message, 'This room is in slow mode.');
   });
 
   test('detects subscriber status from USERSTATE badges', () => {
-    const client = new TwitchIrcClient();
+    const client = new TwitchIrcClient({ channel: 'rubius' });
 
     // User is not subscribed
     client._parseLine('@badge-info=;badges=premium/1;color=... :tmi.twitch.tv USERSTATE #rubius');
@@ -85,7 +85,7 @@ describe('TwitchIrcClient Unit Tests', () => {
       username: 'franco',
       channel: 'rubius'
     });
-    client.status = 'joined';
+    client.status = 'authenticated';
     client.isSubscribed = false;
 
     // Room state activates subs-only
@@ -107,7 +107,7 @@ describe('TwitchIrcClient Unit Tests', () => {
       username: 'mybot',
       channel: 'targetchannel'
     });
-    client.status = 'joined';
+    client.status = 'authenticated';
 
     const sent = [];
     client._send = (line) => sent.push(line);
@@ -124,5 +124,24 @@ describe('TwitchIrcClient Unit Tests', () => {
     assert.equal(sent[0], 'PRIVMSG #targetchannel :!sorteo');
     assert.equal(messageSentEvent.message, '!sorteo');
     assert.equal(messageSentEvent.channel, 'targetchannel');
+  });
+
+  test('supports sending to different channels explicitly', () => {
+    const client = new TwitchIrcClient({
+      username: 'multi_bot'
+    });
+    client.status = 'authenticated';
+
+    const sent = [];
+    client._send = (line) => sent.push(line);
+
+    client.sendMessage('ibai', '!ticket');
+    client.sendMessage('rubius', '!sorteo');
+
+    // Joins each channel and sends PRIVMSG
+    assert.ok(sent.includes('JOIN #ibai'));
+    assert.ok(sent.includes('PRIVMSG #ibai :!ticket'));
+    assert.ok(sent.includes('JOIN #rubius'));
+    assert.ok(sent.includes('PRIVMSG #rubius :!sorteo'));
   });
 });

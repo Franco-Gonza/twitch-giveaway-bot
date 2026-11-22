@@ -6,25 +6,18 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const CONFIG_PATH = process.env.CONFIG_PATH || join(__dirname, '..', 'config.json');
 
 export const DEFAULT_CONFIG = {
-  channel: '',
-  username: '',
-  oauthToken: '',
-  minIntervalSeconds: 30,
-  maxIntervalSeconds: 60,
-  avoidConsecutiveRepeats: true,
-  messages: [
-    '!sorteo',
-    '!ticket',
-    'Participando en el sorteo!',
-    'Mucha suerte a todos!'
-  ]
+  defaultAccount: {
+    username: '',
+    oauthToken: ''
+  },
+  bots: []
 };
 
 export async function loadConfig() {
   try {
     const raw = await readFile(CONFIG_PATH, 'utf-8');
     const parsed = JSON.parse(raw);
-    return normalizeConfig({ ...DEFAULT_CONFIG, ...parsed });
+    return normalizeConfig(parsed);
   } catch (err) {
     if (err.code === 'ENOENT') {
       return { ...DEFAULT_CONFIG };
@@ -41,55 +34,107 @@ export async function saveConfig(updates) {
   return merged;
 }
 
-export function normalizeConfig(config) {
-  const channel = (config.channel || '').trim().replace(/^#/, '').toLowerCase();
-  const username = (config.username || '').trim().toLowerCase();
-  
-  let token = (config.oauthToken || '').trim();
+export function normalizeAccount(acc = {}) {
+  const username = (acc.username || '').trim().toLowerCase();
+  let token = (acc.oauthToken || '').trim();
   if (token && !token.startsWith('oauth:')) {
     token = `oauth:${token}`;
   }
+  return { username, oauthToken: token };
+}
 
-  let minInterval = Number.parseInt(config.minIntervalSeconds, 10);
-  if (Number.isNaN(minInterval) || minInterval < 5) {
-    minInterval = 5; // Safety lower bound to prevent rapid chat flooding
-  }
+export function normalizeBot(bot, index = 0) {
+  const id = bot.id || `bot_${Date.now()}_${index}`;
+  const name = (bot.name || `Bot #${index + 1}`).trim();
+  const channel = (bot.channel || '').trim().replace(/^#/, '').toLowerCase();
 
-  let maxInterval = Number.parseInt(config.maxIntervalSeconds, 10);
+  let minInterval = Number.parseInt(bot.minIntervalSeconds, 10);
+  if (Number.isNaN(minInterval) || minInterval < 5) minInterval = 5;
+
+  let maxInterval = Number.parseInt(bot.maxIntervalSeconds, 10);
   if (Number.isNaN(maxInterval) || maxInterval < minInterval) {
     maxInterval = minInterval + 15;
   }
 
-  const rawMessages = Array.isArray(config.messages) ? config.messages : [];
+  const rawMessages = Array.isArray(bot.messages) ? bot.messages : [];
   const messages = rawMessages
     .map(m => String(m).trim())
     .filter(m => m.length > 0);
 
+  let customAccount = null;
+  if (bot.customAccount && (bot.customAccount.username || bot.customAccount.oauthToken)) {
+    customAccount = normalizeAccount(bot.customAccount);
+  }
+
   return {
+    id,
+    name,
     channel,
-    username,
-    oauthToken: token,
     minIntervalSeconds: minInterval,
     maxIntervalSeconds: maxInterval,
-    avoidConsecutiveRepeats: Boolean(config.avoidConsecutiveRepeats),
-    messages: messages.length > 0 ? messages : ['!sorteo']
+    avoidConsecutiveRepeats: Boolean(bot.avoidConsecutiveRepeats ?? true),
+    messages: messages.length > 0 ? messages : ['!sorteo'],
+    customAccount
   };
 }
 
-export function sanitizeConfigForClient(config) {
-  const safe = { ...config };
-  if (safe.oauthToken) {
-    // Mask token for client view, keeping oauth: prefix and trailing 4 chars
-    const raw = safe.oauthToken.replace(/^oauth:/, '');
-    const masked = raw.length > 6 
-      ? `oauth:••••••••${raw.slice(-4)}` 
-      : 'oauth:••••••••';
-    safe.oauthTokenMasked = masked;
-    safe.hasToken = true;
-  } else {
-    safe.oauthTokenMasked = '';
-    safe.hasToken = false;
+export function normalizeConfig(config = {}) {
+  // Migration for legacy single-bot config:
+  let defaultAccount = { username: '', oauthToken: '' };
+  if (config.defaultAccount) {
+    defaultAccount = normalizeAccount(config.defaultAccount);
+  } else if (config.username || config.oauthToken) {
+    defaultAccount = normalizeAccount({
+      username: config.username,
+      oauthToken: config.oauthToken
+    });
   }
-  delete safe.oauthToken;
+
+  let bots = [];
+  if (Array.isArray(config.bots)) {
+    bots = config.bots.map((b, i) => normalizeBot(b, i));
+  } else if (config.channel || (Array.isArray(config.messages) && config.messages.length > 0)) {
+    // Migrate legacy single bot entry into the bots list
+    bots = [
+      normalizeBot({
+        id: 'default_bot',
+        name: config.channel ? `Sorteo #${config.channel}` : 'Canal Principal',
+        channel: config.channel || '',
+        minIntervalSeconds: config.minIntervalSeconds || 30,
+        maxIntervalSeconds: config.maxIntervalSeconds || 60,
+        avoidConsecutiveRepeats: config.avoidConsecutiveRepeats ?? true,
+        messages: config.messages || ['!sorteo']
+      }, 0)
+    ];
+  }
+
+  return {
+    defaultAccount,
+    bots
+  };
+}
+
+export function maskToken(token) {
+  if (!token) return '';
+  const raw = token.replace(/^oauth:/, '');
+  return raw.length > 6 ? `oauth:••••••••${raw.slice(-4)}` : 'oauth:••••••••';
+}
+
+export function sanitizeConfigForClient(config) {
+  const safe = {
+    defaultAccount: {
+      username: config.defaultAccount.username,
+      hasToken: Boolean(config.defaultAccount.oauthToken),
+      oauthTokenMasked: maskToken(config.defaultAccount.oauthToken)
+    },
+    bots: config.bots.map(b => ({
+      ...b,
+      customAccount: b.customAccount ? {
+        username: b.customAccount.username,
+        hasToken: Boolean(b.customAccount.oauthToken),
+        oauthTokenMasked: maskToken(b.customAccount.oauthToken)
+      } : null
+    }))
+  };
   return safe;
 }
