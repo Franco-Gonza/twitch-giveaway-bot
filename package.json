@@ -1,0 +1,19 @@
+{
+  "name": "twitch-giveaway-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lightweight Twitch giveaway auto-commenter with modern web UI",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "twitch",
+    "bot",
+    "giveaway",
+    "chat",
+    "lightweight"
+  ],
+  "license": "MIT"
+}

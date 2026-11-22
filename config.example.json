@@ -1,0 +1,14 @@
+{
+  "channel": "streamer_channel",
+  "username": "your_twitch_username",
+  "oauthToken": "oauth:your_oauth_token_here",
+  "minIntervalSeconds": 30,
+  "maxIntervalSeconds": 60,
+  "avoidConsecutiveRepeats": true,
+  "messages": [
+    "!sorteo",
+    "!ticket",
+    "Participando en el sorteo!",
+    "Mucha suerte a todos!"
+  ]
+}

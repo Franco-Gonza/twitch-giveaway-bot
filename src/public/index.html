@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Lightweight Twitch Giveaway Auto-Commenter">
+  <title>Twitch Giveaway Auto-Commenter</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-branding">
+        <svg class="twitch-icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
+          <path fill="currentColor" d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/>
+        </svg>
+        <h1>Twitch Giveaway Bot</h1>
+      </div>
+      <div class="header-actions">
+        <div id="irc-status-badge" class="badge badge-disconnected" aria-live="polite">
+          <span class="status-dot"></span>
+          <span class="status-text">Disconnected</span>
+        </div>
+        <button id="open-settings-btn" class="btn btn-secondary icon-btn" title="Settings" aria-label="Open Settings">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Settings</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <main class="dashboard-grid">
+      <!-- Target Channel & Main Controller Card -->
+      <section class="card control-card">
+        <div class="card-header">
+          <h2>Bot Control Panel</h2>
+          <span id="bot-status-pill" class="pill pill-idle">Stopped</span>
+        </div>
+
+        <div class="channel-banner">
+          <span class="label">Target Channel:</span>
+          <span id="display-channel" class="channel-name">#not-configured</span>
+          <span id="display-user" class="user-subtext">as (not logged in)</span>
+        </div>
+
+        <!-- Timer / Countdown display -->
+        <div class="timer-container">
+          <div class="timer-display">
+            <span class="timer-label">Next Comment In</span>
+            <span id="countdown-seconds" class="timer-value">--</span>
+            <span class="timer-unit">seconds</span>
+          </div>
+          <div class="progress-bar-bg" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="action-buttons">
+          <button id="start-btn" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            <span>Start Bot</span>
+          </button>
+          <button id="stop-btn" class="btn btn-danger" disabled>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12"></rect>
+            </svg>
+            <span>Stop Bot</span>
+          </button>
+          <button id="test-btn" class="btn btn-secondary" title="Send a single random message now">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+            <span>Send Now</span>
+          </button>
+        </div>
+
+        <div class="stats-footer">
+          <div>Comments Sent: <strong id="sent-count">0</strong></div>
+          <div>Interval: <span id="display-interval">30s - 60s</span></div>
+        </div>
+      </section>
+
+      <!-- Message Pool Manager Card -->
+      <section class="card messages-card">
+        <div class="card-header">
+          <h2>Giveaway Messages Pool</h2>
+          <span id="message-count-badge" class="badge badge-muted">0 messages</span>
+        </div>
+        <p class="section-description">
+          The bot randomly picks one of these messages on each interval to avoid repetitive spam detection.
+        </p>
+
+        <!-- New message form -->
+        <form id="add-message-form" class="inline-form" onsubmit="return false;">
+          <label for="new-message-input" class="visually-hidden">Add new message</label>
+          <input 
+            type="text" 
+            id="new-message-input" 
+            placeholder="e.g. !sorteo, Participando!, Buena suerte!" 
+            maxlength="250"
+            autocomplete="off"
+            required
+          >
+          <button type="submit" id="add-message-btn" class="btn btn-secondary">Add</button>
+        </form>
+
+        <!-- Messages Tag List -->
+        <div id="messages-list" class="messages-tags-container">
+          <!-- Dynamically populated tags -->
+        </div>
+      </section>
+
+      <!-- Live Activity Terminal Card -->
+      <section class="card logs-card">
+        <div class="card-header">
+          <h2>Activity Log</h2>
+          <button id="clear-logs-btn" class="btn btn-subtle btn-sm">Clear</button>
+        </div>
+        <div id="logs-container" class="terminal-log" role="log" aria-live="polite">
+          <!-- Live events will append here -->
+        </div>
+      </section>
+    </main>
+
+    <!-- Settings Dialog -->
+    <dialog id="settings-dialog" class="modern-dialog" aria-labelledby="settings-dialog-title">
+      <div class="dialog-content">
+        <div class="dialog-header">
+          <h2 id="settings-dialog-title">Twitch Bot Configuration</h2>
+          <button id="close-dialog-btn" class="btn btn-subtle icon-btn" aria-label="Close dialog">✕</button>
+        </div>
+
+        <!-- Token helper alert -->
+        <div class="token-helper-box">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+          <div>
+            <strong>Need your Twitch OAuth Token?</strong>
+            <p>Generate it in 5 seconds with standard chat permissions from:</p>
+            <p>
+              <a href="https://twitchapps.com/tmi/" target="_blank" rel="noopener noreferrer" class="link-highlight">
+                twitchapps.com/tmi (Quick TMI Token) ↗
+              </a>
+              &nbsp;|&nbsp;
+              <a href="https://twitchtokengenerator.com/" target="_blank" rel="noopener noreferrer" class="link-highlight">
+                twitchtokengenerator.com ↗
+              </a>
+            </p>
+          </div>
+        </div>
+
+        <form id="settings-form" class="settings-form">
+          <fieldset class="form-group">
+            <legend class="visually-hidden">Twitch Account</legend>
+
+            <label for="cfg-username">
+              <span>Twitch Username</span>
+              <input type="text" id="cfg-username" name="username" placeholder="your_twitch_username" required autocomplete="username">
+            </label>
+
+            <label for="cfg-oauth">
+              <span>OAuth Token</span>
+              <input type="password" id="cfg-oauth" name="oauthToken" placeholder="oauth:xxxxxxxxxxxxxxxxxxxx" required autocomplete="current-password">
+              <small class="field-hint">Starts with <code>oauth:</code>. Kept securely on your local machine.</small>
+            </label>
+
+            <label for="cfg-channel">
+              <span>Target Channel</span>
+              <input type="text" id="cfg-channel" name="channel" placeholder="e.g. ibai, auronplay, streamer" required autocomplete="off">
+              <small class="field-hint">The Twitch channel running the giveaway (without #).</small>
+            </label>
+          </fieldset>
+
+          <fieldset class="form-group">
+            <legend>Timer & Timing Intervals</legend>
+
+            <div class="form-row">
+              <label for="cfg-min-interval">
+                <span>Min Interval (seconds)</span>
+                <input type="number" id="cfg-min-interval" name="minIntervalSeconds" min="5" max="3600" value="30" required>
+              </label>
+
+              <label for="cfg-max-interval">
+                <span>Max Interval (seconds)</span>
+                <input type="number" id="cfg-max-interval" name="maxIntervalSeconds" min="5" max="3600" value="60" required>
+              </label>
+            </div>
+            <small class="field-hint">A random delay between Min and Max is chosen per message (avoids bot detection).</small>
+
+            <div class="checkbox-row">
+              <label class="checkbox-label" for="cfg-avoid-repeats">
+                <input type="checkbox" id="cfg-avoid-repeats" name="avoidConsecutiveRepeats" checked>
+                <span>Avoid sending the same message twice in a row</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="dialog-actions">
+            <button type="button" id="cancel-dialog-btn" class="btn btn-secondary">Cancel</button>
+            <button type="submit" id="save-config-btn" class="btn btn-primary">Save Configuration</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
