@@ -94,6 +94,13 @@ export class BotManager extends EventEmitter {
         this.emit('client_status', { username: user, status });
       });
 
+      client.on('error', (err) => {
+        this.emit('log', { 
+          type: 'warning', 
+          text: `IRC connection warning (@${user}): ${err?.message || 'Socket event'}` 
+        });
+      });
+
       client.on('chat_message', (payload) => {
         const { channel, username, message, isMod, isBroadcaster, displayName, color } = payload;
         this.trendAnalyzer.recordMessage(channel, message, username);

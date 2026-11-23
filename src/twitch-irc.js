@@ -25,6 +25,7 @@ export class TwitchIrcClient extends EventEmitter {
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
     this.reconnectTimer = null;
+    this.pingInterval = null;
     this.manualDisconnect = false;
   }
 
@@ -107,7 +108,10 @@ export class TwitchIrcClient extends EventEmitter {
       this.ws = new WebSocket(this.serverUrl);
     } catch (err) {
       this._setStatus('disconnected');
-      this.emit('error', err);
+      this.emit('log', { type: 'error', text: `Failed to open WebSocket: ${err.message}` });
+      if (this.listenerCount('error') > 0) {
+        this.emit('error', err);
+      }
       this._scheduleReconnect();
       return;
     }
@@ -130,6 +134,7 @@ export class TwitchIrcClient extends EventEmitter {
 
     this.ws.addEventListener('close', (event) => {
       const wasConnected = this.status !== 'disconnected';
+      this._stopPingInterval();
       this._setStatus('disconnected');
       this.ws = null;
 
@@ -151,13 +156,34 @@ export class TwitchIrcClient extends EventEmitter {
     });
 
     this.ws.addEventListener('error', (event) => {
-      this.emit('log', { type: 'error', text: `WebSocket error: ${event.message || 'Unknown error'}` });
-      this.emit('error', event);
+      const errMsg = event.message || (event.error && event.error.message) || 'Socket closed or network reset';
+      this.emit('log', { type: 'warning', text: `WebSocket notice: ${errMsg}` });
+      if (this.listenerCount('error') > 0) {
+        this.emit('error', event);
+      }
     });
+  }
+
+  _stopPingInterval() {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+  }
+
+  _startPingInterval() {
+    this._stopPingInterval();
+    this.pingInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN && this.status === 'authenticated') {
+        this._send('PING :tmi.twitch.tv');
+      }
+    }, 45000);
+    if (this.pingInterval.unref) this.pingInterval.unref();
   }
 
   disconnect() {
     this.manualDisconnect = true;
+    this._stopPingInterval();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -287,9 +313,14 @@ export class TwitchIrcClient extends EventEmitter {
       return;
     }
 
+    if (line.startsWith('PONG')) {
+      return;
+    }
+
     // 2. Authentication success (001 numeric RPL_WELCOME)
     if (line.includes(' 001 ') && line.includes('GLHF')) {
       this._setStatus('authenticated');
+      this._startPingInterval();
       this.emit('log', { type: 'success', text: `Authenticated successfully as @${this.username}` });
       
       // Join all registered channels

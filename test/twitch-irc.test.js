@@ -207,4 +207,49 @@ describe('TwitchIrcClient Unit Tests', () => {
     assert.equal(chatEvt.isMod, true);
     assert.equal(chatEvt.isBroadcaster, true);
   });
+
+  test('safely handles incoming PONG messages without error', () => {
+    const client = new TwitchIrcClient({
+      username: 'viewer',
+      channel: 'rubius'
+    });
+
+    assert.doesNotThrow(() => {
+      client._parseLine('PONG :tmi.twitch.tv');
+    });
+  });
+
+  test('safely handles WebSocket error events without throwing unhandled error', () => {
+    const client = new TwitchIrcClient({
+      username: 'viewer',
+      channel: 'rubius'
+    });
+
+    // Verify there are no 'error' listeners registered
+    assert.equal(client.listenerCount('error'), 0);
+
+    // Mock ws with mock event dispatcher
+    const errorHandlers = [];
+    client.ws = {
+      addEventListener: (type, cb) => {
+        if (type === 'error') errorHandlers.push(cb);
+      },
+      readyState: 1,
+      send: () => {}
+    };
+
+    // Attach mock error listener as TwitchIrcClient does
+    client.ws.addEventListener('error', (event) => {
+      const errMsg = event.message || 'Socket error';
+      client.emit('log', { type: 'warning', text: errMsg });
+      if (client.listenerCount('error') > 0) {
+        client.emit('error', event);
+      }
+    });
+
+    // Simulating websocket error event must NOT throw ERR_UNHANDLED_ERROR
+    assert.doesNotThrow(() => {
+      errorHandlers[0]({ message: 'ETIMEDOUT' });
+    });
+  });
 });

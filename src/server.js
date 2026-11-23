@@ -75,6 +75,19 @@ botManager.on('room_state', (state) => {
   broadcast('room_state', state);
 });
 botManager.on('client_status', (status) => broadcast('client_status', status));
+botManager.on('error', (err) => {
+  logEntry('warning', `BotManager notice: ${err?.message || err}`);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[Process UncaughtException]', err);
+  logEntry('error', `Process error: ${err?.message || 'Uncaught exception'}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process UnhandledRejection]', reason);
+  logEntry('warning', `Unhandled promise: ${reason?.message || reason}`);
+});
 
 // Pinned Chat Synchronizer (Polls Twitch GQL for pinned messages every 20s)
 async function syncPinnedChatForChannels() {
