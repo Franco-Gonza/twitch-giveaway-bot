@@ -80,4 +80,33 @@ describe('BotManager Unit Tests', () => {
     const stopState1 = manager.stopBot('b1');
     assert.equal(stopState1.running, false);
   });
+
+  test('sends manual chat messages via sendManualMessage', () => {
+    const manager = new BotManager({
+      defaultAccount: { username: 'test_user', oauthToken: 'oauth:sample' },
+      bots: [{ id: 'b1', name: 'B1', channel: 'rubius', messages: ['m1'] }]
+    });
+
+    let sentChannel = null;
+    let sentMessage = null;
+
+    manager.getOrCreateClient = () => ({
+      username: 'test_user',
+      status: 'authenticated',
+      connect: () => {},
+      joinChannel: (ch) => {},
+      sendMessage: (ch, msg) => {
+        sentChannel = ch;
+        sentMessage = msg;
+        return true;
+      }
+    });
+
+    const result = manager.sendManualMessage('rubius', 'Hola chat!');
+    assert.equal(result.ok, true);
+    assert.equal(result.channel, 'rubius');
+    assert.equal(result.message, 'Hola chat!');
+    assert.equal(sentChannel, 'rubius');
+    assert.equal(sentMessage, 'Hola chat!');
+  });
 });

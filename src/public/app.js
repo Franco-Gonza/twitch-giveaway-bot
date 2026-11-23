@@ -14,6 +14,20 @@ const botsGrid = document.getElementById('bots-grid');
 const logsContainer = document.getElementById('logs-container');
 const clearLogsBtn = document.getElementById('clear-logs-btn');
 
+// Live Chat Elements
+const chatChannelSelect = document.getElementById('chat-channel-select');
+const chatMessagesContainer = document.getElementById('chat-messages-container');
+const chatSendForm = document.getElementById('chat-send-form');
+const chatSendInput = document.getElementById('chat-send-input');
+const chatSendBtn = document.getElementById('chat-send-btn');
+const toggleAutoscrollBtn = document.getElementById('toggle-autoscroll-btn');
+const clearChatBtn = document.getElementById('clear-chat-btn');
+
+let selectedChatChannel = '';
+let chatAutoScroll = true;
+const chatBuffers = {}; // channel -> Array of { username, message, isSelf, timestamp }
+const MAX_CLIENT_CHAT_LINES = 150;
+
 // Account Dialog Elements
 const accountDialog = document.getElementById('account-dialog');
 const closeAccountDialogBtn = document.getElementById('close-account-dialog-btn');
@@ -51,6 +65,12 @@ function initEventSource() {
     botStates = data.botStates || {};
     updateHeaderAccount();
     renderBotsGrid();
+    if (data.recentChat) {
+      for (const [chan, msgs] of Object.entries(data.recentChat)) {
+        chatBuffers[chan] = msgs.slice(-MAX_CLIENT_CHAT_LINES);
+      }
+    }
+    updateChatChannelOptions();
     if (data.trendStats) {
       for (const [botId, stats] of Object.entries(data.trendStats)) {
         updateBotCardTrend(botId, stats);
@@ -66,6 +86,7 @@ function initEventSource() {
     appConfig = JSON.parse(e.data);
     updateHeaderAccount();
     renderBotsGrid();
+    updateChatChannelOptions();
   });
 
   eventSource.addEventListener('bot_state', (e) => {
@@ -88,6 +109,11 @@ function initEventSource() {
   eventSource.addEventListener('bot_trend', (e) => {
     const { botId, stats } = JSON.parse(e.data);
     updateBotCardTrend(botId, stats);
+  });
+
+  eventSource.addEventListener('chat_message', (e) => {
+    const msg = JSON.parse(e.data);
+    appendChatMessage(msg);
   });
 
   eventSource.addEventListener('log', (e) => {
@@ -539,6 +565,155 @@ botDialog.addEventListener('click', (e) => {
 clearLogsBtn.addEventListener('click', () => {
   logsContainer.innerHTML = '';
 });
+
+// Live Chat Functions & Listeners
+function updateChatChannelOptions() {
+  if (!chatChannelSelect) return;
+  const bots = appConfig.bots || [];
+  const channels = Array.from(new Set(bots.map(b => (b.channel || '').trim().toLowerCase()).filter(Boolean)));
+  if (channels.length === 0) channels.push('rubius');
+
+  const current = selectedChatChannel;
+  chatChannelSelect.innerHTML = '';
+  channels.forEach(ch => {
+    const opt = document.createElement('option');
+    opt.value = ch;
+    opt.textContent = `#${ch}`;
+    if (ch === current) opt.selected = true;
+    chatChannelSelect.appendChild(opt);
+  });
+
+  if (!channels.includes(selectedChatChannel)) {
+    selectedChatChannel = channels[0];
+    chatChannelSelect.value = selectedChatChannel;
+  }
+
+  const accUser = appConfig.defaultAccount?.username || 'you';
+  if (chatSendInput) {
+    chatSendInput.placeholder = `Send comment to #${selectedChatChannel} as @${accUser}...`;
+  }
+  renderChannelChat();
+}
+
+function renderChannelChat() {
+  if (!chatMessagesContainer) return;
+  chatMessagesContainer.innerHTML = '';
+  const msgs = chatBuffers[selectedChatChannel] || [];
+  if (msgs.length === 0) {
+    chatMessagesContainer.innerHTML = `<div class="chat-empty-state">No messages in #${escapeHtml(selectedChatChannel)} yet. Listening...</div>`;
+    return;
+  }
+  msgs.forEach(msg => {
+    renderChatLine(msg);
+  });
+  if (chatAutoScroll) {
+    chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+  }
+}
+
+function renderChatLine(msg) {
+  if (!chatMessagesContainer) return;
+  const placeholder = chatMessagesContainer.querySelector('.chat-empty-state');
+  if (placeholder) placeholder.remove();
+
+  const line = document.createElement('div');
+  line.className = `chat-line ${msg.isSelf ? 'chat-line-self' : ''}`;
+
+  const timeStr = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+
+  line.innerHTML = `
+    <span class="chat-time">${escapeHtml(timeStr)}</span>
+    <span class="chat-author">@${escapeHtml(msg.username || 'unknown')}:</span>
+    <span class="chat-text">${escapeHtml(msg.message || '')}</span>
+  `;
+
+  chatMessagesContainer.appendChild(line);
+
+  while (chatMessagesContainer.children.length > MAX_CLIENT_CHAT_LINES) {
+    chatMessagesContainer.removeChild(chatMessagesContainer.firstChild);
+  }
+
+  if (chatAutoScroll) {
+    chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+  }
+}
+
+function appendChatMessage(msg) {
+  const chan = (msg.channel || '').toLowerCase();
+  if (!chatBuffers[chan]) chatBuffers[chan] = [];
+  chatBuffers[chan].push(msg);
+  if (chatBuffers[chan].length > MAX_CLIENT_CHAT_LINES) {
+    chatBuffers[chan].shift();
+  }
+
+  if (chan === selectedChatChannel) {
+    renderChatLine(msg);
+  }
+}
+
+if (chatChannelSelect) {
+  chatChannelSelect.addEventListener('change', () => {
+    selectedChatChannel = chatChannelSelect.value;
+    const accUser = appConfig.defaultAccount?.username || 'you';
+    if (chatSendInput) {
+      chatSendInput.placeholder = `Send comment to #${selectedChatChannel} as @${accUser}...`;
+    }
+    renderChannelChat();
+  });
+}
+
+if (toggleAutoscrollBtn) {
+  toggleAutoscrollBtn.addEventListener('click', () => {
+    chatAutoScroll = !chatAutoScroll;
+    toggleAutoscrollBtn.textContent = `Auto-Scroll: ${chatAutoScroll ? 'ON' : 'OFF'}`;
+    toggleAutoscrollBtn.classList.toggle('active', chatAutoScroll);
+    if (chatAutoScroll && chatMessagesContainer) {
+      chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+    }
+  });
+}
+
+if (clearChatBtn) {
+  clearChatBtn.addEventListener('click', () => {
+    chatBuffers[selectedChatChannel] = [];
+    renderChannelChat();
+  });
+}
+
+if (chatSendForm) {
+  chatSendForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = (chatSendInput.value || '').trim();
+    if (!text || !selectedChatChannel) return;
+
+    chatSendInput.disabled = true;
+    chatSendBtn.disabled = true;
+
+    try {
+      const res = await fetch('/api/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel: selectedChatChannel,
+          message: text
+        })
+      });
+
+      if (res.ok) {
+        chatSendInput.value = '';
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to send comment');
+      }
+    } catch {
+      alert('Network error sending comment to Twitch IRC');
+    } finally {
+      chatSendInput.disabled = false;
+      chatSendBtn.disabled = false;
+      chatSendInput.focus();
+    }
+  });
+}
 
 function escapeHtml(str) {
   if (!str) return '';

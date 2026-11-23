@@ -96,6 +96,23 @@ export class BotManager extends EventEmitter {
 
       client.on('chat_message', ({ channel, username, message }) => {
         this.trendAnalyzer.recordMessage(channel, message, username);
+        this.emit('chat_message', {
+          channel,
+          username,
+          message,
+          isSelf: username === user,
+          timestamp: Date.now()
+        });
+      });
+
+      client.on('message_sent', ({ channel, message }) => {
+        this.emit('chat_message', {
+          channel,
+          username: user,
+          message,
+          isSelf: true,
+          timestamp: Date.now()
+        });
       });
 
       this.clients.set(user, client);
@@ -262,6 +279,40 @@ export class BotManager extends EventEmitter {
     const msg = runner.scheduler.pickRandomMessage() || '!sorteo';
     const ok = client.sendMessage(runner.botConfig.channel, msg);
     return { ok, message: msg };
+  }
+
+  sendManualMessage(channel, text) {
+    const cleanChan = (channel || '').replace(/^[#/]+/, '').toLowerCase();
+    const cleanMsg = (text || '').trim();
+    if (!cleanChan) throw new Error('Channel name is required');
+    if (!cleanMsg) throw new Error('Message cannot be empty');
+
+    // Find custom account if assigned to a bot for this channel, otherwise use defaultAccount
+    let account = this.defaultAccount;
+    for (const runner of this.bots.values()) {
+      if (runner.botConfig.channel && runner.botConfig.channel.toLowerCase() === cleanChan) {
+        account = this.getAccountForBot(runner.botConfig);
+        break;
+      }
+    }
+
+    const client = this.getOrCreateClient(account);
+    if (!client) throw new Error('No Twitch account configured');
+
+    if (client.status !== 'authenticated') {
+      client.connect();
+    }
+    client.joinChannel(cleanChan);
+
+    const sent = client.sendMessage(cleanChan, cleanMsg);
+    if (sent === 'sub_only_blocked') {
+      throw new Error(`Channel #${cleanChan} is in subscriber-only mode and @${client.username} is not subscribed.`);
+    }
+    if (!sent) {
+      throw new Error(`Failed to send message: IRC client not ready (Status: ${client.status})`);
+    }
+
+    return { ok: true, channel: cleanChan, message: cleanMsg, username: client.username };
   }
 
   getAllStates() {

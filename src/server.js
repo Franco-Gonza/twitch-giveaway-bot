@@ -42,11 +42,28 @@ function logEntry(type, text) {
   broadcast('log', entry);
 }
 
+// Live Channel Chat buffers
+const channelChatBuffers = new Map(); // channel -> Array<{ channel, username, message, isSelf, timestamp }>
+const MAX_CHAT_BUFFER = 100;
+
+function addChatMessage(msg) {
+  const chan = (msg.channel || '').toLowerCase();
+  if (!channelChatBuffers.has(chan)) {
+    channelChatBuffers.set(chan, []);
+  }
+  const buf = channelChatBuffers.get(chan);
+  buf.push(msg);
+  if (buf.length > MAX_CHAT_BUFFER) buf.shift();
+
+  broadcast('chat_message', msg);
+}
+
 // Wire BotManager events
 botManager.on('log', ({ type, text }) => logEntry(type, text));
 botManager.on('bot_state', (state) => broadcast('bot_state', state));
 botManager.on('bot_countdown', (countdown) => broadcast('bot_countdown', countdown));
 botManager.on('bot_trend', (trend) => broadcast('bot_trend', trend));
+botManager.on('chat_message', (msg) => addChatMessage(msg));
 botManager.on('client_status', (status) => broadcast('client_status', status));
 
 // MIME types for static assets
@@ -127,6 +144,7 @@ const server = createServer(async (req, res) => {
       config: sanitizeConfigForClient(config),
       botStates: botManager.getAllStates(),
       trendStats: botManager.getAllTrendStats(),
+      recentChat: Object.fromEntries(channelChatBuffers.entries()),
       logs: logHistory
     };
     res.write(`event: init\ndata: ${JSON.stringify(initData)}\n\n`);
@@ -259,6 +277,30 @@ const server = createServer(async (req, res) => {
     const stats = botManager.getBotTrendStats(botId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(stats || { totalInWindow: 0, windowSeconds: 25, topTrend: null, topPhrases: [] }));
+    return;
+  }
+
+  // POST /api/chat/send (Send manual chat message via IRC)
+  if (pathname === '/api/chat/send' && req.method === 'POST') {
+    try {
+      const body = await parseJsonBody(req);
+      const result = botManager.sendManualMessage(body.channel, body.message);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // GET /api/chat/:channel (Fetch recent messages for channel)
+  const chatMatch = pathname.match(/^\/api\/chat\/([^/]+)$/);
+  if (chatMatch && req.method === 'GET') {
+    const chan = chatMatch[1].toLowerCase();
+    const messages = channelChatBuffers.get(chan) || [];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ channel: chan, messages }));
     return;
   }
 

@@ -49,6 +49,50 @@
         <!-- Rendered dynamically -->
       </div>
 
+      <!-- Live Channel Chat & Comment Card -->
+      <section class="card chat-card" id="chat-section">
+        <div class="card-header chat-card-header">
+          <div class="chat-header-title-group">
+            <h2>Live Channel Chat</h2>
+            <select id="chat-channel-select" class="channel-dropdown" aria-label="Select channel for live chat">
+              <!-- Options populated dynamically from configured bots -->
+            </select>
+            <span class="live-badge" title="Live IRC Stream">
+              <span class="live-dot"></span> LIVE
+            </span>
+          </div>
+          <div class="chat-header-controls">
+            <button type="button" id="toggle-autoscroll-btn" class="btn btn-subtle btn-sm active" title="Toggle Auto Scroll">
+              Auto-Scroll: ON
+            </button>
+            <button type="button" id="clear-chat-btn" class="btn btn-subtle btn-sm" title="Clear chat feed">Clear</button>
+          </div>
+        </div>
+
+        <div id="chat-messages-container" class="chat-messages-box" role="log" aria-live="polite">
+          <div class="chat-empty-state">Connecting to channel chat...</div>
+        </div>
+
+        <form id="chat-send-form" class="chat-send-bar">
+          <input 
+            type="text" 
+            id="chat-send-input" 
+            name="chatMessage" 
+            placeholder="Type comment to send via IRC as configured Twitch user..." 
+            autocomplete="off" 
+            maxlength="450"
+            required
+          >
+          <button type="submit" id="chat-send-btn" class="btn btn-primary">
+            <span>Send</span>
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </form>
+      </section>
+
       <!-- Live Activity Terminal Card -->
       <section class="card logs-card">
         <div class="card-header">
