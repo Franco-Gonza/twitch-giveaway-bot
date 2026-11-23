@@ -84,6 +84,9 @@ function initEventSource() {
       channelAnnouncements = data.announcements;
     }
     updateChatChannelOptions();
+    if (selectedChatChannel) {
+      loadChannelState(selectedChatChannel);
+    }
     if (data.trendStats) {
       for (const [botId, stats] of Object.entries(data.trendStats)) {
         updateBotCardTrend(botId, stats);
@@ -142,6 +145,19 @@ function initEventSource() {
     const data = JSON.parse(e.data);
     const chan = (data.channel || '').toLowerCase();
     channelAnnouncements[chan] = data;
+    if (chan === selectedChatChannel) {
+      updateChannelPinnedAnnouncementUI();
+    }
+  });
+
+  eventSource.addEventListener('pinned_message', (e) => {
+    const data = JSON.parse(e.data);
+    const chan = (data.channel || '').toLowerCase();
+    if (!data.text) {
+      delete channelAnnouncements[chan];
+    } else {
+      channelAnnouncements[chan] = data;
+    }
     if (chan === selectedChatChannel) {
       updateChannelPinnedAnnouncementUI();
     }
@@ -626,6 +642,9 @@ function updateChatChannelOptions() {
   renderChannelChat();
   updateChannelRoomStateUI();
   updateChannelPinnedAnnouncementUI();
+  if (selectedChatChannel) {
+    loadChannelState(selectedChatChannel);
+  }
 }
 
 function updateChannelRoomStateUI() {
@@ -666,12 +685,42 @@ function updateChannelRoomStateUI() {
 function updateChannelPinnedAnnouncementUI() {
   if (!chatPinnedBanner || !pinnedMessageText) return;
   const ann = channelAnnouncements[selectedChatChannel];
-  if (ann && ann.message) {
+  const pinnedAuthorBadge = document.getElementById('pinned-author-badge');
+
+  const text = ann ? (ann.text || ann.message || '') : '';
+  const author = ann ? (ann.pinnedBy || ann.author || 'Moderador') : '';
+
+  if (text) {
     chatPinnedBanner.style.display = 'flex';
-    pinnedMessageText.textContent = ann.message;
+    pinnedMessageText.textContent = text;
+    if (pinnedAuthorBadge) {
+      pinnedAuthorBadge.innerHTML = `📌 Fijado por <span class="mod-icon" title="Moderador">⚔️</span> <strong>@${escapeHtml(author)}</strong>`;
+    }
   } else {
     chatPinnedBanner.style.display = 'none';
   }
+}
+
+async function loadChannelState(chan) {
+  if (!chan) return;
+  try {
+    const res = await fetch(`/api/chat/${encodeURIComponent(chan)}/state`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.roomState) {
+        channelRoomStates[chan] = data.roomState;
+      }
+      if (data.pinned) {
+        channelAnnouncements[chan] = data.pinned;
+      } else if (data.announcement) {
+        channelAnnouncements[chan] = data.announcement;
+      }
+      if (chan === selectedChatChannel) {
+        updateChannelRoomStateUI();
+        updateChannelPinnedAnnouncementUI();
+      }
+    }
+  } catch {}
 }
 
 function renderChannelChat() {
@@ -748,6 +797,7 @@ if (chatChannelSelect) {
     renderChannelChat();
     updateChannelRoomStateUI();
     updateChannelPinnedAnnouncementUI();
+    loadChannelState(selectedChatChannel);
   });
 }
 
@@ -822,3 +872,10 @@ function escapeHtml(str) {
 
 // Boot
 initEventSource();
+
+// Periodic background sync for room mode and pinned chat
+setInterval(() => {
+  if (selectedChatChannel) {
+    loadChannelState(selectedChatChannel);
+  }
+}, 20000);

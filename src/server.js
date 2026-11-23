@@ -4,6 +4,7 @@ import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, saveConfig, sanitizeConfigForClient, normalizeBot } from './config.js';
 import { BotManager } from './bot-manager.js';
+import { fetchPinnedChatMessage } from './twitch-pinned.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
@@ -74,6 +75,37 @@ botManager.on('room_state', (state) => {
   broadcast('room_state', state);
 });
 botManager.on('client_status', (status) => broadcast('client_status', status));
+
+// Pinned Chat Synchronizer (Polls Twitch GQL for pinned messages every 20s)
+async function syncPinnedChatForChannels() {
+  const channels = new Set((config.bots || []).map(b => (b.channel || '').replace(/^[#/]+/, '').toLowerCase()).filter(Boolean));
+  for (const bot of botManager.bots.values()) {
+    if (bot.channel) channels.add(bot.channel.replace(/^[#/]+/, '').toLowerCase());
+  }
+  if (channels.size === 0) channels.add('rubius');
+
+  for (const ch of channels) {
+    try {
+      const pinned = await fetchPinnedChatMessage(ch);
+      const existing = channelAnnouncements.get(ch);
+      if (pinned) {
+        if (!existing || existing.id !== pinned.id || existing.text !== pinned.text) {
+          channelAnnouncements.set(ch, pinned);
+          broadcast('pinned_message', pinned);
+        }
+      } else if (existing) {
+        channelAnnouncements.delete(ch);
+        broadcast('pinned_message', { channel: ch, text: null, pinnedBy: null });
+      }
+    } catch {
+      // Best-effort non-blocking
+    }
+  }
+}
+
+const pinnedSyncTimer = setInterval(syncPinnedChatForChannels, 20000);
+if (pinnedSyncTimer.unref) pinnedSyncTimer.unref();
+syncPinnedChatForChannels();
 
 // MIME types for static assets
 const MIME_TYPES = {
@@ -319,11 +351,20 @@ const server = createServer(async (req, res) => {
   const chatStateMatch = pathname.match(/^\/api\/chat\/([^/]+)\/state$/);
   if (chatStateMatch && req.method === 'GET') {
     const chan = chatStateMatch[1].toLowerCase();
+    let pinned = channelAnnouncements.get(chan) || null;
+    if (!pinned) {
+      try {
+        pinned = await fetchPinnedChatMessage(chan);
+        if (pinned) channelAnnouncements.set(chan, pinned);
+      } catch {}
+    }
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       channel: chan,
       roomState: botManager.getChannelRoomState(chan),
-      announcement: channelAnnouncements.get(chan) || null
+      pinned,
+      announcement: pinned
     }));
     return;
   }
