@@ -115,6 +115,14 @@ export class BotManager extends EventEmitter {
         });
       });
 
+      client.on('room_state', (data) => {
+        this.emit('room_state', data);
+      });
+
+      client.on('announcement', (data) => {
+        this.emit('announcement', data);
+      });
+
       this.clients.set(user, client);
     } else {
       // Update token if changed
@@ -191,6 +199,15 @@ export class BotManager extends EventEmitter {
 
     if (client.status !== 'authenticated') {
       client.connect();
+    }
+
+    // Proactive Sub-Only Mode check: never send suspicious / rejected attempts to Twitch IRC
+    if (client.isSubOnlyBlocked(runner.botConfig.channel)) {
+      this.emit('log', {
+        type: 'warning',
+        text: `[#${runner.botConfig.channel}] ⏸ Modo Suscriptores activo: bot en pausa preventiva para evitar envíos sospechosos.`
+      });
+      return;
     }
 
     // Hybrid Trend Detection: Check if there is an active crowd trend
@@ -337,5 +354,23 @@ export class BotManager extends EventEmitter {
       }
     }
     return stats;
+  }
+
+  getChannelRoomState(channel) {
+    const cleanChan = (channel || '').replace(/^[#/]+/, '').toLowerCase();
+    for (const client of this.clients.values()) {
+      return client.getChannelState(cleanChan);
+    }
+    return { subOnly: false, isSubscribed: false, blocked: false };
+  }
+
+  getAllRoomStates() {
+    const map = {};
+    for (const [id, runner] of this.bots.entries()) {
+      if (runner.botConfig.channel) {
+        map[runner.botConfig.channel.toLowerCase()] = this.getChannelRoomState(runner.botConfig.channel);
+      }
+    }
+    return map;
   }
 }

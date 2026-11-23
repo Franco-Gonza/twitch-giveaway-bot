@@ -60,6 +60,9 @@
             <span class="live-badge" title="Live IRC Stream">
               <span class="live-dot"></span> LIVE
             </span>
+            <span id="chat-mode-badge" class="room-mode-badge mode-open" title="Chat Room Status">
+              🔓 Chat Abierto
+            </span>
           </div>
           <div class="chat-header-controls">
             <button type="button" id="toggle-autoscroll-btn" class="btn btn-subtle btn-sm active" title="Toggle Auto Scroll">
@@ -69,8 +72,22 @@
           </div>
         </div>
 
+        <!-- Pinned Moderator Announcement Banner -->
+        <div id="chat-pinned-banner" class="chat-pinned-banner" style="display: none;">
+          <div class="pinned-header">
+            <span class="pinned-badge">📌 MENSAJE / ANUNCIO FIJADO</span>
+            <button type="button" id="dismiss-pinned-btn" class="btn btn-subtle btn-xs" aria-label="Dismiss pinned announcement">✕</button>
+          </div>
+          <div id="pinned-message-text" class="pinned-text"></div>
+        </div>
+
         <div id="chat-messages-container" class="chat-messages-box" role="log" aria-live="polite">
           <div class="chat-empty-state">Connecting to channel chat...</div>
+        </div>
+
+        <!-- Subscriber-Only Warning Notice -->
+        <div id="chat-sub-warning" class="chat-warning-banner" style="display: none;">
+          <span>🔒 <strong>Modo Suscriptores Activo:</strong> Este canal requiere suscripción pagada para chatear. El bot está en pausa preventiva y el envío manual está bloqueado para proteger tu cuenta.</span>
         </div>
 
         <form id="chat-send-form" class="chat-send-bar">

@@ -74,6 +74,15 @@ export class TwitchIrcClient extends EventEmitter {
     return Boolean(state.subOnly && !state.isSubscribed);
   }
 
+  getChannelState(channel = this.channel) {
+    const state = this._getOrCreateChannelState(channel);
+    return {
+      subOnly: Boolean(state.subOnly),
+      isSubscribed: Boolean(state.isSubscribed),
+      blocked: Boolean(state.subOnly && !state.isSubscribed)
+    };
+  }
+
   updateCredentials({ username, oauthToken }) {
     if (username) this.username = username.toLowerCase();
     if (oauthToken) this.oauthToken = oauthToken;
@@ -303,15 +312,34 @@ export class TwitchIrcClient extends EventEmitter {
     }
 
     // Extract target channel if present in IRC line
-    const chanMatch = line.match(/(?:JOIN|PART|ROOMSTATE|USERSTATE|NOTICE)\s+#(\w+)/);
+    const chanMatch = line.match(/(?:JOIN|PART|ROOMSTATE|USERSTATE|USERNOTICE|NOTICE)\s+#(\w+)/);
     const lineChannel = chanMatch ? chanMatch[1].toLowerCase() : this.channel;
     const channelState = this._getOrCreateChannelState(lineChannel);
 
-    // 4. Genuine system NOTICE messages (e.g. slowmode, bans, sub-only), ignoring USERNOTICE (subs/raids)
+    // 4a. Moderator Announcements (/announce or pinned messages broadcasted as USERNOTICE)
+    if (line.includes('USERNOTICE') && line.includes('msg-id=announcement')) {
+      const match = line.match(/(?:^|\s)USERNOTICE\s+#\w*\s*:(.*)$/);
+      if (match) {
+        const announcementText = match[1];
+        this.emit('announcement', {
+          channel: lineChannel,
+          message: announcementText,
+          timestamp: Date.now()
+        });
+        this.emit('log', {
+          type: 'info',
+          text: `[#${lineChannel}] 📌 Moderator Announcement: "${announcementText}"`
+        });
+      }
+      return;
+    }
+
+    // 4b. Genuine system NOTICE messages (e.g. slowmode, bans, sub-only), ignoring other USERNOTICE (subs/raids)
     if (!line.includes('USERNOTICE') && /(?:^|\s)NOTICE\s+/.test(line)) {
       if (line.includes('msg_subsonly') || line.includes('not a subscriber')) {
         channelState.subOnly = true;
         channelState.isSubscribed = false;
+        this.emit('room_state', { channel: lineChannel, ...this.getChannelState(lineChannel) });
         this.emit('log', {
           type: 'warning',
           text: `[#${lineChannel}] Twitch confirmed subscriber-only mode restriction. Auto-commenting paused.`
@@ -332,6 +360,7 @@ export class TwitchIrcClient extends EventEmitter {
         const newSubOnly = subMatch[1] === '1';
         if (channelState.subOnly !== newSubOnly) {
           channelState.subOnly = newSubOnly;
+          this.emit('room_state', { channel: lineChannel, ...this.getChannelState(lineChannel) });
           if (channelState.subOnly) {
             this.emit('log', {
               type: 'warning',
@@ -356,6 +385,7 @@ export class TwitchIrcClient extends EventEmitter {
         const badges = badgeMatch[1] || '';
         const isSub = /(?:subscriber|founder|moderator|broadcaster)\//.test(badges);
         channelState.isSubscribed = isSub;
+        this.emit('room_state', { channel: lineChannel, ...this.getChannelState(lineChannel) });
       }
       return;
     }

@@ -144,4 +144,22 @@ describe('TwitchIrcClient Unit Tests', () => {
     assert.ok(sent.includes('JOIN #rubius'));
     assert.ok(sent.includes('PRIVMSG #rubius :!sorteo'));
   });
+
+  test('parses moderator announcements and emits announcement event', () => {
+    const client = new TwitchIrcClient({
+      username: 'viewer',
+      channel: 'rubius'
+    });
+
+    let announcementEvt = null;
+    client.on('announcement', (evt) => {
+      announcementEvt = evt;
+    });
+
+    client._parseLine('@badge-info=;badges=moderator/1;msg-id=announcement;room-id=123 :tmi.twitch.tv USERNOTICE #rubius :Código del sorteo: 48291');
+
+    assert.ok(announcementEvt);
+    assert.equal(announcementEvt.channel, 'rubius');
+    assert.equal(announcementEvt.message, 'Código del sorteo: 48291');
+  });
 });

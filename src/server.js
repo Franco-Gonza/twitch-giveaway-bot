@@ -44,6 +44,7 @@ function logEntry(type, text) {
 
 // Live Channel Chat buffers
 const channelChatBuffers = new Map(); // channel -> Array<{ channel, username, message, isSelf, timestamp }>
+const channelAnnouncements = new Map(); // channel -> { message, timestamp }
 const MAX_CHAT_BUFFER = 100;
 
 function addChatMessage(msg) {
@@ -64,6 +65,14 @@ botManager.on('bot_state', (state) => broadcast('bot_state', state));
 botManager.on('bot_countdown', (countdown) => broadcast('bot_countdown', countdown));
 botManager.on('bot_trend', (trend) => broadcast('bot_trend', trend));
 botManager.on('chat_message', (msg) => addChatMessage(msg));
+botManager.on('announcement', (ann) => {
+  const chan = (ann.channel || '').toLowerCase();
+  channelAnnouncements.set(chan, ann);
+  broadcast('announcement', ann);
+});
+botManager.on('room_state', (state) => {
+  broadcast('room_state', state);
+});
 botManager.on('client_status', (status) => broadcast('client_status', status));
 
 // MIME types for static assets
@@ -144,6 +153,8 @@ const server = createServer(async (req, res) => {
       config: sanitizeConfigForClient(config),
       botStates: botManager.getAllStates(),
       trendStats: botManager.getAllTrendStats(),
+      roomStates: botManager.getAllRoomStates(),
+      announcements: Object.fromEntries(channelAnnouncements.entries()),
       recentChat: Object.fromEntries(channelChatBuffers.entries()),
       logs: logHistory
     };
@@ -301,6 +312,19 @@ const server = createServer(async (req, res) => {
     const messages = channelChatBuffers.get(chan) || [];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ channel: chan, messages }));
+    return;
+  }
+
+  // GET /api/chat/:channel/state (Fetch channel room state and pinned announcement)
+  const chatStateMatch = pathname.match(/^\/api\/chat\/([^/]+)\/state$/);
+  if (chatStateMatch && req.method === 'GET') {
+    const chan = chatStateMatch[1].toLowerCase();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      channel: chan,
+      roomState: botManager.getChannelRoomState(chan),
+      announcement: channelAnnouncements.get(chan) || null
+    }));
     return;
   }
 

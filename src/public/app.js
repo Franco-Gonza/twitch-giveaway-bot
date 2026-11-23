@@ -22,10 +22,17 @@ const chatSendInput = document.getElementById('chat-send-input');
 const chatSendBtn = document.getElementById('chat-send-btn');
 const toggleAutoscrollBtn = document.getElementById('toggle-autoscroll-btn');
 const clearChatBtn = document.getElementById('clear-chat-btn');
+const chatModeBadge = document.getElementById('chat-mode-badge');
+const chatPinnedBanner = document.getElementById('chat-pinned-banner');
+const pinnedMessageText = document.getElementById('pinned-message-text');
+const dismissPinnedBtn = document.getElementById('dismiss-pinned-btn');
+const chatSubWarning = document.getElementById('chat-sub-warning');
 
 let selectedChatChannel = '';
 let chatAutoScroll = true;
 const chatBuffers = {}; // channel -> Array of { username, message, isSelf, timestamp }
+let channelRoomStates = {}; // channel -> { subOnly, isSubscribed, blocked }
+let channelAnnouncements = {}; // channel -> { message, timestamp }
 const MAX_CLIENT_CHAT_LINES = 150;
 
 // Account Dialog Elements
@@ -69,6 +76,12 @@ function initEventSource() {
       for (const [chan, msgs] of Object.entries(data.recentChat)) {
         chatBuffers[chan] = msgs.slice(-MAX_CLIENT_CHAT_LINES);
       }
+    }
+    if (data.roomStates) {
+      channelRoomStates = data.roomStates;
+    }
+    if (data.announcements) {
+      channelAnnouncements = data.announcements;
     }
     updateChatChannelOptions();
     if (data.trendStats) {
@@ -114,6 +127,24 @@ function initEventSource() {
   eventSource.addEventListener('chat_message', (e) => {
     const msg = JSON.parse(e.data);
     appendChatMessage(msg);
+  });
+
+  eventSource.addEventListener('room_state', (e) => {
+    const data = JSON.parse(e.data);
+    const chan = (data.channel || '').toLowerCase();
+    channelRoomStates[chan] = data;
+    if (chan === selectedChatChannel) {
+      updateChannelRoomStateUI();
+    }
+  });
+
+  eventSource.addEventListener('announcement', (e) => {
+    const data = JSON.parse(e.data);
+    const chan = (data.channel || '').toLowerCase();
+    channelAnnouncements[chan] = data;
+    if (chan === selectedChatChannel) {
+      updateChannelPinnedAnnouncementUI();
+    }
   });
 
   eventSource.addEventListener('log', (e) => {
@@ -593,6 +624,54 @@ function updateChatChannelOptions() {
     chatSendInput.placeholder = `Send comment to #${selectedChatChannel} as @${accUser}...`;
   }
   renderChannelChat();
+  updateChannelRoomStateUI();
+  updateChannelPinnedAnnouncementUI();
+}
+
+function updateChannelRoomStateUI() {
+  if (!chatModeBadge) return;
+  const state = channelRoomStates[selectedChatChannel] || { subOnly: false, isSubscribed: false, blocked: false };
+  const accUser = appConfig.defaultAccount?.username || 'you';
+
+  if (state.blocked) {
+    chatModeBadge.textContent = '🔒 Solo Suscriptores';
+    chatModeBadge.className = 'room-mode-badge mode-subonly';
+    if (chatSubWarning) chatSubWarning.style.display = 'block';
+    if (chatSendInput) {
+      chatSendInput.disabled = true;
+      chatSendInput.placeholder = 'Modo solo suscriptores activo (comentarios en pausa preventiva)';
+    }
+    if (chatSendBtn) chatSendBtn.disabled = true;
+  } else if (state.subOnly && state.isSubscribed) {
+    chatModeBadge.textContent = '⭐ Sub-Only (Estás Suscripto)';
+    chatModeBadge.className = 'room-mode-badge mode-open';
+    if (chatSubWarning) chatSubWarning.style.display = 'none';
+    if (chatSendInput) {
+      chatSendInput.disabled = false;
+      chatSendInput.placeholder = `Send comment to #${selectedChatChannel} as @${accUser}...`;
+    }
+    if (chatSendBtn) chatSendBtn.disabled = false;
+  } else {
+    chatModeBadge.textContent = '🔓 Chat Abierto';
+    chatModeBadge.className = 'room-mode-badge mode-open';
+    if (chatSubWarning) chatSubWarning.style.display = 'none';
+    if (chatSendInput) {
+      chatSendInput.disabled = false;
+      chatSendInput.placeholder = `Send comment to #${selectedChatChannel} as @${accUser}...`;
+    }
+    if (chatSendBtn) chatSendBtn.disabled = false;
+  }
+}
+
+function updateChannelPinnedAnnouncementUI() {
+  if (!chatPinnedBanner || !pinnedMessageText) return;
+  const ann = channelAnnouncements[selectedChatChannel];
+  if (ann && ann.message) {
+    chatPinnedBanner.style.display = 'flex';
+    pinnedMessageText.textContent = ann.message;
+  } else {
+    chatPinnedBanner.style.display = 'none';
+  }
 }
 
 function renderChannelChat() {
@@ -616,14 +695,22 @@ function renderChatLine(msg) {
   const placeholder = chatMessagesContainer.querySelector('.chat-empty-state');
   if (placeholder) placeholder.remove();
 
+  const myUsername = (appConfig.defaultAccount?.username || '').trim().toLowerCase();
+  const authorName = (msg.username || '').trim().toLowerCase();
+  const isMe = Boolean(msg.isSelf || (myUsername && authorName === myUsername));
+
   const line = document.createElement('div');
-  line.className = `chat-line ${msg.isSelf ? 'chat-line-self' : ''}`;
+  line.className = `chat-line ${isMe ? 'chat-line-self' : ''}`;
 
   const timeStr = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
 
+  const authorHtml = isMe
+    ? `<span class="chat-author chat-author-self">⭐ @${escapeHtml(msg.username)} <span class="badge-self">TÚ</span>:</span>`
+    : `<span class="chat-author">@${escapeHtml(msg.username || 'unknown')}:</span>`;
+
   line.innerHTML = `
     <span class="chat-time">${escapeHtml(timeStr)}</span>
-    <span class="chat-author">@${escapeHtml(msg.username || 'unknown')}:</span>
+    ${authorHtml}
     <span class="chat-text">${escapeHtml(msg.message || '')}</span>
   `;
 
@@ -659,6 +746,15 @@ if (chatChannelSelect) {
       chatSendInput.placeholder = `Send comment to #${selectedChatChannel} as @${accUser}...`;
     }
     renderChannelChat();
+    updateChannelRoomStateUI();
+    updateChannelPinnedAnnouncementUI();
+  });
+}
+
+if (dismissPinnedBtn) {
+  dismissPinnedBtn.addEventListener('click', () => {
+    delete channelAnnouncements[selectedChatChannel];
+    updateChannelPinnedAnnouncementUI();
   });
 }
 
