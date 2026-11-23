@@ -11,8 +11,31 @@ const openAccountBtn = document.getElementById('open-account-btn');
 const addBotBtn = document.getElementById('add-bot-btn');
 const botCountIndicator = document.getElementById('bot-count-indicator');
 const botsGrid = document.getElementById('bots-grid');
+const btnViewGrid = document.getElementById('btn-view-grid');
+const btnViewList = document.getElementById('btn-view-list');
 const logsContainer = document.getElementById('logs-container');
 const clearLogsBtn = document.getElementById('clear-logs-btn');
+
+let currentViewMode = localStorage.getItem('twitch_bots_view_mode') || 'grid';
+let draggedBotId = null;
+
+function setViewMode(mode) {
+  currentViewMode = mode;
+  localStorage.setItem('twitch_bots_view_mode', mode);
+  if (botsGrid) {
+    botsGrid.classList.toggle('view-list', mode === 'list');
+    botsGrid.classList.toggle('view-grid', mode === 'grid');
+  }
+  if (btnViewGrid) btnViewGrid.classList.toggle('active', mode === 'grid');
+  if (btnViewList) btnViewList.classList.toggle('active', mode === 'list');
+}
+
+if (btnViewGrid) {
+  btnViewGrid.addEventListener('click', () => setViewMode('grid'));
+}
+if (btnViewList) {
+  btnViewList.addEventListener('click', () => setViewMode('list'));
+}
 
 // Live Chat Elements
 const chatChannelSelect = document.getElementById('chat-channel-select');
@@ -201,20 +224,25 @@ function renderBotsGrid() {
     const card = document.createElement('div');
     card.className = 'bot-card';
     card.id = `card-${bot.id}`;
+    card.dataset.botId = bot.id;
+    card.setAttribute('draggable', 'true');
 
     const state = botStates[bot.id] || { running: false, sentCount: 0 };
 
     card.innerHTML = `
       <div class="bot-card-header">
         <div class="bot-title-group">
-          <h3>${escapeHtml(bot.name)}</h3>
-          <div class="channel-links-row">
-            <a href="https://twitch.tv/${escapeHtml(bot.channel)}" target="_blank" rel="noopener noreferrer" class="bot-channel-tag" title="Open ${bot.channel} on Twitch">
-              #${escapeHtml(bot.channel || 'unassigned')} ↗
-            </a>
-            <a href="https://twitch.tv/popout/${escapeHtml(bot.channel)}/chat?popout=" target="_blank" rel="noopener noreferrer" class="chat-popout-link" title="Open Popout Chat">
-              💬 Popout Chat
-            </a>
+          <div class="bot-drag-handle" title="Arrastrar para ordenar" aria-label="Reorder handle">⋮⋮</div>
+          <div>
+            <h3>${escapeHtml(bot.name)}</h3>
+            <div class="channel-links-row">
+              <a href="https://twitch.tv/${escapeHtml(bot.channel)}" target="_blank" rel="noopener noreferrer" class="bot-channel-tag" title="Open ${bot.channel} on Twitch">
+                #${escapeHtml(bot.channel || 'unassigned')} ↗
+              </a>
+              <a href="https://twitch.tv/popout/${escapeHtml(bot.channel)}/chat?popout=" target="_blank" rel="noopener noreferrer" class="chat-popout-link" title="Open Popout Chat">
+                💬 Popout Chat
+              </a>
+            </div>
           </div>
         </div>
         <div class="bot-header-controls">
@@ -268,8 +296,86 @@ function renderBotsGrid() {
       </div>
     `;
 
+    // Prevent child interactive elements from triggering drag
+    card.querySelectorAll('button, a, input, select').forEach(el => {
+      el.setAttribute('draggable', 'false');
+    });
+
+    // Drag and Drop Events
+    card.addEventListener('dragstart', (e) => {
+      draggedBotId = bot.id;
+      card.classList.add('is-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', bot.id);
+    });
+
+    card.addEventListener('dragend', () => {
+      draggedBotId = null;
+      document.querySelectorAll('.bot-card').forEach(c => {
+        c.classList.remove('is-dragging', 'drag-over-before', 'drag-over-after');
+      });
+    });
+
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (!draggedBotId || draggedBotId === bot.id) return;
+      e.dataTransfer.dropEffect = 'move';
+
+      const rect = card.getBoundingClientRect();
+      const isList = botsGrid.classList.contains('view-list');
+      const isBefore = isList
+        ? (e.clientY - rect.top < rect.height / 2)
+        : (e.clientX - rect.left < rect.width / 2);
+
+      card.classList.toggle('drag-over-before', isBefore);
+      card.classList.toggle('drag-over-after', !isBefore);
+    });
+
+    card.addEventListener('dragleave', () => {
+      card.classList.remove('drag-over-before', 'drag-over-after');
+    });
+
+    card.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      card.classList.remove('drag-over-before', 'drag-over-after');
+      if (!draggedBotId || draggedBotId === bot.id) return;
+
+      const rect = card.getBoundingClientRect();
+      const isList = botsGrid.classList.contains('view-list');
+      const isBefore = isList
+        ? (e.clientY - rect.top < rect.height / 2)
+        : (e.clientX - rect.left < rect.width / 2);
+
+      const botsList = [...(appConfig.bots || [])];
+      const fromIndex = botsList.findIndex(b => b.id === draggedBotId);
+      if (fromIndex === -1) return;
+
+      const [movedBot] = botsList.splice(fromIndex, 1);
+      let toIndex = botsList.findIndex(b => b.id === bot.id);
+      if (toIndex === -1) toIndex = 0;
+      if (!isBefore) {
+        toIndex += 1;
+      }
+      botsList.splice(toIndex, 0, movedBot);
+      appConfig.bots = botsList;
+
+      renderBotsGrid();
+
+      try {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bots: appConfig.bots })
+        });
+      } catch (err) {
+        console.error('Failed to save reordered bots:', err);
+      }
+    });
+
     botsGrid.appendChild(card);
   });
+
+  setViewMode(currentViewMode);
 }
 
 function updateBotCardState(botId) {
