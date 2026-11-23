@@ -94,13 +94,19 @@ export class BotManager extends EventEmitter {
         this.emit('client_status', { username: user, status });
       });
 
-      client.on('chat_message', ({ channel, username, message }) => {
+      client.on('chat_message', (payload) => {
+        const { channel, username, message, isMod, isBroadcaster, displayName, color } = payload;
         this.trendAnalyzer.recordMessage(channel, message, username);
         this.emit('chat_message', {
+          ...payload,
           channel,
           username,
           message,
           isSelf: username === user,
+          isMod: Boolean(isMod),
+          isBroadcaster: Boolean(isBroadcaster),
+          displayName: displayName || username,
+          color: color || null,
           timestamp: Date.now()
         });
       });
@@ -109,8 +115,12 @@ export class BotManager extends EventEmitter {
         this.emit('chat_message', {
           channel,
           username: user,
+          displayName: user,
           message,
           isSelf: true,
+          isMod: false,
+          isBroadcaster: false,
+          color: null,
           timestamp: Date.now()
         });
       });

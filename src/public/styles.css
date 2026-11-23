@@ -741,6 +741,20 @@ body {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
+.chat-line-mod {
+  background-color: rgba(16, 185, 129, 0.14);
+  border-left: 3px solid #10b981;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.chat-line-broadcaster {
+  background-color: rgba(244, 63, 94, 0.14);
+  border-left: 3px solid #f43f5e;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
 .chat-time {
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -762,6 +776,22 @@ body {
   gap: 0.3rem;
 }
 
+.chat-author-mod {
+  color: #34d399 !important;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.chat-author-broadcaster {
+  color: #fb7185 !important;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
 .badge-self {
   background: linear-gradient(135deg, #6366f1, #a855f7);
   color: #ffffff;
@@ -771,6 +801,34 @@ body {
   border-radius: 4px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.badge-mod {
+  background: linear-gradient(135deg, #059669, #10b981);
+  color: #ffffff;
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.badge-broadcaster {
+  background: linear-gradient(135deg, #e11d48, #f43f5e);
+  color: #ffffff;
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
 }
 
 .btn-xs {

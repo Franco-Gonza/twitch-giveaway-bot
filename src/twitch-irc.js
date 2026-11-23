@@ -399,10 +399,23 @@ export class TwitchIrcClient extends EventEmitter {
         const msgText = match[3];
 
         if (chatter !== this.username) {
+          const isBroadcaster = /[;@]badges=[^;\s]*broadcaster\//.test(line) || chatter === chan;
+          const isMod = isBroadcaster || /[;@]mod=1(?=[;\s]|$)/.test(line) || /[;@]badges=[^;\s]*moderator\//.test(line);
+
+          const colorMatch = line.match(/[;@]color=([^;\s]+)/);
+          const color = colorMatch && colorMatch[1] ? colorMatch[1] : null;
+
+          const displayNameMatch = line.match(/[;@]display-name=([^;\s]+)/);
+          const displayName = displayNameMatch && displayNameMatch[1] ? displayNameMatch[1] : chatter;
+
           this.emit('chat_message', {
             channel: chan,
             username: chatter,
-            message: msgText
+            displayName,
+            message: msgText,
+            isMod,
+            isBroadcaster,
+            color
           });
         }
       }

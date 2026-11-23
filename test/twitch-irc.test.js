@@ -162,4 +162,49 @@ describe('TwitchIrcClient Unit Tests', () => {
     assert.equal(announcementEvt.channel, 'rubius');
     assert.equal(announcementEvt.message, 'Código del sorteo: 48291');
   });
+
+  test('parses incoming chat PRIVMSG and identifies moderator messages correctly', () => {
+    const client = new TwitchIrcClient({
+      username: 'viewer',
+      channel: 'rubius'
+    });
+
+    let chatEvt = null;
+    client.on('chat_message', (evt) => {
+      chatEvt = evt;
+    });
+
+    client._parseLine('@badge-info=;badges=moderator/1;color=#00FF7F;display-name=CsinHache;mod=1 :csinhache!csinhache@csinhache.tmi.twitch.tv PRIVMSG #rubius :sorteo cada 10m');
+
+    assert.ok(chatEvt);
+    assert.equal(chatEvt.channel, 'rubius');
+    assert.equal(chatEvt.username, 'csinhache');
+    assert.equal(chatEvt.displayName, 'CsinHache');
+    assert.equal(chatEvt.message, 'sorteo cada 10m');
+    assert.equal(chatEvt.isMod, true);
+    assert.equal(chatEvt.isBroadcaster, false);
+    assert.equal(chatEvt.color, '#00FF7F');
+  });
+
+  test('parses incoming chat PRIVMSG and identifies broadcaster correctly', () => {
+    const client = new TwitchIrcClient({
+      username: 'viewer',
+      channel: 'rubius'
+    });
+
+    let chatEvt = null;
+    client.on('chat_message', (evt) => {
+      chatEvt = evt;
+    });
+
+    client._parseLine('@badge-info=;badges=broadcaster/1;color=#FF0000;display-name=Rubius;mod=0 :rubius!rubius@rubius.tmi.twitch.tv PRIVMSG #rubius :empezamos el sorteo!');
+
+    assert.ok(chatEvt);
+    assert.equal(chatEvt.channel, 'rubius');
+    assert.equal(chatEvt.username, 'rubius');
+    assert.equal(chatEvt.displayName, 'Rubius');
+    assert.equal(chatEvt.message, 'empezamos el sorteo!');
+    assert.equal(chatEvt.isMod, true);
+    assert.equal(chatEvt.isBroadcaster, true);
+  });
 });

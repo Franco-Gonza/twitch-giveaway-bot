@@ -747,15 +747,34 @@ function renderChatLine(msg) {
   const myUsername = (appConfig.defaultAccount?.username || '').trim().toLowerCase();
   const authorName = (msg.username || '').trim().toLowerCase();
   const isMe = Boolean(msg.isSelf || (myUsername && authorName === myUsername));
+  const isBroadcaster = Boolean(msg.isBroadcaster);
+  const isMod = Boolean(msg.isMod && !isBroadcaster);
 
   const line = document.createElement('div');
-  line.className = `chat-line ${isMe ? 'chat-line-self' : ''}`;
+  let lineClass = 'chat-line';
+  if (isMe) {
+    lineClass += ' chat-line-self';
+  } else if (isBroadcaster) {
+    lineClass += ' chat-line-broadcaster';
+  } else if (isMod) {
+    lineClass += ' chat-line-mod';
+  }
+  line.className = lineClass;
 
   const timeStr = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+  const dispName = escapeHtml(msg.displayName || msg.username || 'unknown');
 
-  const authorHtml = isMe
-    ? `<span class="chat-author chat-author-self">⭐ @${escapeHtml(msg.username)} <span class="badge-self">TÚ</span>:</span>`
-    : `<span class="chat-author">@${escapeHtml(msg.username || 'unknown')}:</span>`;
+  let authorHtml = '';
+  if (isMe) {
+    const modBadge = (isMod || isBroadcaster) ? ' <span class="badge-mod">⚔️ MOD</span>' : '';
+    authorHtml = `<span class="chat-author chat-author-self">⭐ @${dispName} <span class="badge-self">TÚ</span>${modBadge}:</span>`;
+  } else if (isBroadcaster) {
+    authorHtml = `<span class="chat-author chat-author-broadcaster"><span class="badge-broadcaster">👑 CANAL</span> @${dispName}:</span>`;
+  } else if (isMod) {
+    authorHtml = `<span class="chat-author chat-author-mod"><span class="badge-mod">⚔️ MOD</span> @${dispName}:</span>`;
+  } else {
+    authorHtml = `<span class="chat-author">@${dispName}:</span>`;
+  }
 
   line.innerHTML = `
     <span class="chat-time">${escapeHtml(timeStr)}</span>
